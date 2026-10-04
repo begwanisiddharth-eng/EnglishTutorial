@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Word Hoard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand">Word<span>&middot;</span>Hoard</div>
+  <div class="nav-links">
+    <button class="nav-btn active" id="nav-today" onclick="showView('today')">Today</button>
+    <button class="nav-btn" id="nav-browse" onclick="showView('browse')">Browse</button>
+    <button class="nav-btn" id="nav-all" onclick="showView('all')">All Words</button>
+    <a class="nav-btn nav-pdf" href="/api/pdf" target="_blank">PDF</a>
+  </div>
+</nav>
+
+<main>
+  <section id="view-today" class="view">
+    <div class="page-header">
+      <h1 id="today-heading">Today</h1>
+      <p>Click any card for meanings, examples, synonyms and antonyms.</p>
+    </div>
+    <div class="cards-row" id="today-cards"></div>
+    <div class="action-bar" id="today-actions" hidden>
+      <div class="add-word-form">
+        <input type="text" id="add-input" placeholder="Look up a word or phrase..." maxlength="80"
+               onkeydown="if (event.key === 'Enter') addEntry()">
+        <button class="btn btn-primary" id="add-btn" onclick="addEntry()">
+          <span class="spinner"></span><span class="btn-label">Add</span>
+        </button>
+      </div>
+      <button class="btn btn-secondary" id="more-btn" onclick="generateMore()">
+        <span class="spinner dark"></span><span class="btn-label">5 More Words</span>
+      </button>
+    </div>
+  </section>
+
+  <section id="view-browse" class="view" hidden>
+    <div class="page-header">
+      <h1>Browse by Date</h1>
+      <p>Highlighted dates have accepted entries. Past days show accepted entries only.</p>
+    </div>
+    <div class="calendar-wrapper">
+      <div class="cal-nav">
+        <button class="cal-nav-btn" onclick="moveMonth(-1)">&#8249;</button>
+        <span class="cal-title" id="cal-title"></span>
+        <button class="cal-nav-btn" onclick="moveMonth(1)">&#8250;</button>
+      </div>
+      <div class="cal-day-headers">
+        <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+    </div>
+    <h2 class="browse-heading" id="browse-heading"></h2>
+    <div class="cards-row" id="browse-cards"></div>
+  </section>
+
+  <section id="view-all" class="view" hidden>
+    <div class="page-header">
+      <h1>All Words</h1>
+      <p>Every accepted entry, alphabetically. Deleting one returns it to the vocabulary list.</p>
+    </div>
+    <div class="search-bar">
+      <input type="text" id="search" placeholder="Search..." oninput="renderList()">
+    </div>
+    <ul class="word-list" id="word-list"></ul>
+  </section>
+</main>
+
+<div class="drawer-overlay" id="overlay" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-header">
+    <div>
+      <div class="drawer-word" id="d-word"></div>
+      <div class="pronunciation" id="d-pron"></div>
+      <div class="drawer-ipa" id="d-ipa"></div>
+      <div class="drawer-def" id="d-def"></div>
+    </div>
+    <button class="btn-close" onclick="closeDrawer()" aria-label="Close">&times;</button>
+  </div>
+  <div class="drawer-body" id="d-body"></div>
+  <div class="drawer-footer">
+    <textarea id="d-feedback" rows="2"
+              placeholder="What should change? e.g. drop the second quote, add the chemistry sense"></textarea>
+    <div class="footer-buttons">
+      <button class="btn btn-secondary" id="d-edit" onclick="reviseActive()">
+        <span class="spinner dark"></span><span class="btn-label">Edit</span>
+      </button>
+      <button class="btn btn-success" id="d-accept" onclick="acceptActive()">
+        <span class="spinner"></span><span class="btn-label">Accept</span>
+      </button>
+      <span class="accepted-note" id="d-accepted" hidden>Accepted</span>
+      <button class="btn btn-danger" id="d-delete" onclick="deleteActive()">Delete</button>
+    </div>
+  </div>
+</aside>
+
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+[project]
+name = "vocab-app"
+version = "0.1.0"
+description = "Local browser app for learning advanced English vocabulary."
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.142.2",
+    "litellm>=1.104.0",
+    "python-dotenv>=1.2.4",
+    "reportlab>=5.0.1",
+    "tenacity>=9.1.4",
+    "uvicorn>=0.54.0",
+]
