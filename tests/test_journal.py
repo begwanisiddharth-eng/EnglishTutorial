@@ -177,7 +177,7 @@ def test_detail_puts_guardian_quotes_before_written_examples():
     assert "abate" in detail["examples"][0]["text"]
 
 
-def test_revise_keeps_chosen_quotes_and_applies_the_rest():
+def test_revise_keeps_quotes_and_applies_the_rest():
     entry_id = add_on(TODAY, "abate")
     quote = db.get(entry_id)["detail"]["examples"][0]
     revised = journal.revise(entry_id, "make the meaning shorter")
@@ -239,6 +239,33 @@ def test_concurrent_opens_generate_detail_once(monkeypatch):
     monkeypatch.setattr(llm, "completion", counting)
     assert run_together(*[lambda: journal.detail(entry_id)] * 3) == []
     assert len(detail_calls) == 1
+
+
+def act_during_revision(monkeypatch, action):
+    """Make the revision's LLM call run action first, as a click arriving mid-revision would."""
+    fake = llm.completion
+
+    def completion(**kwargs):
+        if kwargs["response_format"] is llm.Revision:
+            action()
+        return fake(**kwargs)
+
+    monkeypatch.setattr(llm, "completion", completion)
+
+
+def test_revision_finishing_after_accept_is_refused_and_pdf_matches(monkeypatch):
+    entry_id = add_on(TODAY, "abate")
+    act_during_revision(monkeypatch, lambda: journal.accept(entry_id))
+    with pytest.raises(journal.Refused, match="already accepted"):
+        journal.revise(entry_id, "make the meaning shorter")
+    assert db.get(entry_id)["meaning"] == "meaning of abate"
+
+
+def test_revision_finishing_after_delete_is_refused(monkeypatch):
+    entry_id = add_on(TODAY, "abate")
+    act_during_revision(monkeypatch, lambda: journal.delete(entry_id))
+    with pytest.raises(journal.Refused, match="no longer exists"):
+        journal.revise(entry_id, "make the meaning shorter")
 
 
 def test_more_with_nothing_left_is_refused_without_an_llm_call(monkeypatch):

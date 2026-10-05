@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 import config
 import journal
 import server
-from conftest import TODAY, add_on, groq_invalid_key
+from conftest import TODAY, add_on, groq_daily_limit, groq_invalid_key
 
 LOCAL = "http://127.0.0.1:8000"
 
@@ -65,6 +65,7 @@ def raise_from_detail(monkeypatch, error):
     (litellm.NotFoundError("x", llm_provider="groq", model="m"), "does not know the model"),
     (groq_invalid_key(), "rejected the API key"),
     (litellm.RateLimitError("x", llm_provider="groq", model="m"), "LLM service failed"),
+    (groq_daily_limit(), "daily token allowance"),
 ])
 def test_service_failures_return_readable_errors(client, monkeypatch, error, message):
     raise_from_detail(monkeypatch, error)
@@ -77,6 +78,16 @@ def test_missing_settings_are_named(monkeypatch):
     monkeypatch.setattr(config, "LLM_MODEL", "")
     monkeypatch.setattr(config, "GUARDIAN_API_KEY", "")
     assert config.missing_settings() == ["LLM_MODEL", "GUARDIAN_API_KEY"]
+
+
+def test_blank_provider_key_in_env_file_is_named(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("GROQ_API_KEY=\n")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(config, "LLM_MODEL", "groq/openai/gpt-oss-120b")
+    monkeypatch.setattr(config, "GUARDIAN_API_KEY", "k")
+    config.load_env_file(env_file)
+    assert config.missing_settings() == ["GROQ_API_KEY"]
 
 
 def test_missing_provider_key_is_named(monkeypatch):

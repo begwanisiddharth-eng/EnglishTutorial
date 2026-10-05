@@ -44,7 +44,8 @@ def fake_answer(prompt, schema):
     if schema is llm.Choice:
         return {"chosen": [1]}
     return {"pronunciation": "/y/", "respelling": "Y", "meaning": "revised meaning",
-            "senses": [{"part_of_speech": "noun", "definition": "r"}], "keep_quotes": [1],
+            "senses": [{"part_of_speech": "noun", "definition": "r"}],
+            "feedback_asks_to_remove_quotes": False, "drop_quotes": [],
             "written_examples": ["A revised example."], "synonyms": [], "antonyms": []}
 
 
@@ -109,3 +110,12 @@ def viewer_lock(path):
         yield
     finally:
         k32.CloseHandle(ctypes.c_void_p(handle))
+
+
+def groq_daily_limit():
+    """Return the error litellm raises when Groq's daily token allowance is used up (message as seen)."""
+    return litellm.RateLimitError(
+        'GroqException - {"error":{"message":"Rate limit reached for model `openai/gpt-oss-120b` in '
+        "organization `org_x` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 199829, "
+        'Requested 1205. Please try again in 7m26.688s.","type":"tokens","code":"rate_limit_exceeded"}}',
+        llm_provider="groq", model="m")

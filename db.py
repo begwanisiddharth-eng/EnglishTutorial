@@ -36,6 +36,11 @@ def connect():
             yield conn
 
 
+def card_json(card):
+    """Return a card's fields, without the entry itself, as JSON for the card column."""
+    return json.dumps({k: v for k, v in card.items() if k != "entry"}, ensure_ascii=False)
+
+
 def to_dict(row):
     """Flatten a row into a dict, merging card fields and decoding the detail."""
     detail = json.loads(row["detail"]) if row["detail"] else None
@@ -58,10 +63,8 @@ def start_day(day):
 def insert_cards(day, cards):
     """Store new cards for a day."""
     with connect() as conn:
-        conn.executemany(
-            "INSERT INTO entries (entry, day, card) VALUES (?, ?, ?)",
-            [(c["entry"], day, json.dumps({k: v for k, v in c.items() if k != "entry"},
-                                          ensure_ascii=False)) for c in cards])
+        conn.executemany("INSERT INTO entries (entry, day, card) VALUES (?, ?, ?)",
+                         [(c["entry"], day, card_json(c)) for c in cards])
 
 
 def day_entries(day, accepted_only=False):
@@ -94,10 +97,8 @@ def set_detail(entry_id, detail):
 
 def update_card(entry_id, card):
     """Replace an entry's card fields (pronunciation, respelling, meaning)."""
-    fields = {k: v for k, v in card.items() if k != "entry"}
     with connect() as conn:
-        conn.execute("UPDATE entries SET card = ? WHERE id = ?",
-                     (json.dumps(fields, ensure_ascii=False), entry_id))
+        conn.execute("UPDATE entries SET card = ? WHERE id = ?", (card_json(card), entry_id))
 
 
 def set_accepted(entry_id):

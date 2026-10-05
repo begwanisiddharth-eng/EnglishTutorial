@@ -7,6 +7,7 @@ let allEntries = [];
 const known = new Map();      // entry id -> entry, for instant drawer headers
 let activeId = null;
 let focusBeforeDrawer = null;
+let drawerBusy = false;       // an Edit, Accept or Delete from the drawer is running
 let drawerContext = "today";  // "today" | "browse" | "all"
 let calYear = 0, calMonth = 0, selectedDate = null;
 
@@ -248,10 +249,14 @@ async function loadAll() {
   renderList();
 }
 
+/** Return text lowercased with accents removed, as vocab.fold does on the server. */
+function fold(text) {
+  return text.toLowerCase().replace(/œ/g, "oe").replace(/æ/g, "ae").normalize("NFKD").replace(/\p{M}/gu, "");
+}
+
 function renderList() {
-  const query = document.getElementById("search").value.toLowerCase();
-  const shown = allEntries.filter((e) =>
-    e.entry.toLowerCase().includes(query) || e.meaning.toLowerCase().includes(query));
+  const query = fold(document.getElementById("search").value);
+  const shown = allEntries.filter((e) => fold(e.entry).includes(query) || fold(e.meaning).includes(query));
   document.getElementById("word-list").innerHTML = shown.length
     ? shown.map((e) => `
       <li>
@@ -298,12 +303,22 @@ function renderDetail(detail) {
   document.getElementById("d-body").innerHTML = html;
 }
 
-/** Enable feedback, Edit and Accept only for today's loaded, unaccepted entries. */
-function setFooter(entry, context, loaded) {
-  const editable = context !== "browse" && entry.day === todayStr && !entry.accepted && loaded;
+/** Enable feedback, Edit and Accept only for today's loaded, unaccepted entries, and nothing while busy. */
+function setFooter(entry, context) {
+  const editable = !drawerBusy && context !== "browse" && entry.day === todayStr && !entry.accepted && entry.detail;
   ["d-feedback", "d-edit", "d-accept"].forEach((id) => { document.getElementById(id).disabled = !editable; });
   document.getElementById("d-accepted").hidden = !entry.accepted;
   document.getElementById("d-delete").hidden = context === "browse";
+  document.getElementById("d-delete").disabled = drawerBusy;
+}
+
+/** Run a drawer action with the footer locked, so Edit, Accept and Delete cannot overlap. */
+async function drawerAction(action) {
+  drawerBusy = true;
+  setFooter(known.get(activeId), drawerContext);
+  await action();
+  drawerBusy = false;
+  if (activeId !== null) setFooter(known.get(activeId), drawerContext);
 }
 
 /** Redraw a visible card after its entry changed, keeping it highlighted. */
@@ -329,7 +344,7 @@ async function openDrawer(entryId, context) {
   document.getElementById("card-" + entryId)?.classList.add("active");
   renderHeader(known.get(entryId));
   document.getElementById("d-feedback").value = "";
-  setFooter(known.get(entryId), context, false);
+  setFooter(known.get(entryId), context);
   document.getElementById("d-body").innerHTML =
     '<div class="empty">Finding Guardian examples and preparing meanings...</div>';
   document.getElementById("overlay").classList.add("open");
@@ -341,7 +356,7 @@ async function openDrawer(entryId, context) {
     known.set(entryId, entry);
     if (activeId !== entryId) return;
     renderDetail(entry.detail);
-    setFooter(entry, context, true);
+    setFooter(entry, context);
   } catch (error) {
     document.getElementById("d-body").innerHTML = `<div class="empty">${esc(error.message)}</div>`;
   }
@@ -355,7 +370,7 @@ async function reviseActive() {
     toast("Write what should change first.", true);
     return;
   }
-  await withSpinner("d-edit", async () => {
+  await drawerAction(() => withSpinner("d-edit", async () => {
     const entry = await api(`/api/entries/${entryId}/revise`, "POST", { feedback });
     known.set(entryId, entry);
     refreshCard(entry);
@@ -365,20 +380,18 @@ async function reviseActive() {
       document.getElementById("d-feedback").value = "";
     }
     toast("Entry revised.");
-  });
-  if (activeId === entryId) setFooter(known.get(entryId), drawerContext, true);
+  }));
 }
 
 /** Accept the open entry as final. */
 async function acceptActive() {
   const entryId = activeId;
-  await withSpinner("d-accept", async () => {
+  await drawerAction(() => withSpinner("d-accept", async () => {
     const entry = await api(`/api/entries/${entryId}/accept`, "POST");
     known.set(entryId, entry);
     refreshCard(entry);
     toast(`"${entry.entry}" accepted.`);
-  });
-  if (activeId === entryId) setFooter(known.get(entryId), drawerContext, true);
+  }));
 }
 
 function closeDrawer() {
@@ -416,7 +429,7 @@ async function deleteEntry(entryId, context) {
 }
 
 function deleteActive() {
-  deleteEntry(activeId, drawerContext);
+  drawerAction(() => deleteEntry(activeId, drawerContext));
 }
 
 /* ============================================================

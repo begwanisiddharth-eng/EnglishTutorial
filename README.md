@@ -70,6 +70,8 @@ LLM_MODEL=groq/openai/gpt-oss-120b
 
 **Using OpenAI instead of Groq:** set `LLM_MODEL=openai/<model-name>`, choosing
 any OpenAI model that supports structured output, and add `OPENAI_API_KEY=...`.
+`LLM_MODEL=openai/gpt-4o-mini` has been tested end to end. It is paid per use,
+but has no free-tier pauses or daily allowance.
 
 `.env` holds your private keys. Anyone you give it to can use your accounts.
 
@@ -156,6 +158,7 @@ Messages appear at the bottom of the page.
 | Message | Meaning | What to do |
 |---|---|---|
 | *The LLM service failed. Try again in a minute.* | Groq was busy or limited the request, even after about 90 seconds of retrying | Wait a minute and try again |
+| *Groq's daily token allowance is used up. It refills gradually; try again later.* | The free Groq tier allows 200,000 tokens a day, about 130 newly opened entries | Try again later, or switch to OpenAI (see [Setting up the keys](#setting-up-the-keys)) |
 | *The LLM provider rejected the API key in .env.* | `GROQ_API_KEY` is wrong or revoked | Fix the key in `.env` and restart the app |
 | *The LLM provider does not know the model …* | `LLM_MODEL` has a typo or names a retired model | Set `LLM_MODEL=groq/openai/gpt-oss-120b` and restart |
 | *The Guardian rejected GUARDIAN_API_KEY. Check it in .env.* | The Guardian key is wrong | Fix the key in `.env` and restart |
@@ -164,6 +167,7 @@ Messages appear at the bottom of the page.
 | *vocabulary.pdf is open in another program. Close it and try again.* | A PDF viewer such as Acrobat has the file locked, so it cannot be rebuilt. Nothing was changed | Close the PDF, then press Accept or Delete again |
 | *Every entry in the vocabulary list is already on today's page or accepted.* | Nothing is left to pick | Look words up with Add instead |
 | *That entry no longer exists. Reload the page.* | It was deleted, for example in another tab | Reload the page |
+| *"…" is already accepted.* | It was accepted, for example in another tab, while an Edit was running. The edit was not saved | Nothing; the accepted version is the one in the PDF |
 | *No accepted entries yet, so there is no PDF.* | Nothing has been accepted yet | Accept an entry first |
 
 **A card or panel takes a long time:** the app is probably waiting out Groq's
@@ -175,9 +179,9 @@ restarting the app.
 
 ## Problems found and how they were fixed
 
-The app went through three code reviews and a full test with the real Groq and
-Guardian services. These are the problems that could have affected you, and how
-each is now handled.
+The app went through four code reviews, and full tests with the real Groq, OpenAI
+and Guardian services. These are the problems that could have affected you, and
+how each is now handled.
 
 | Problem | How it is handled now |
 |---|---|
@@ -192,20 +196,30 @@ each is now handled.
 | Quote search matched unrelated words ("abate" in "abattoir") and missed real forms ("decried" for "decry") | Matching now uses real English word endings |
 | Keyboard users could Tab into the hidden side panel, or out of the open one | The panel behaves as a proper dialog |
 | Pressing Enter twice in the Add box looked the word up twice | Enter is ignored while a lookup is running |
+| **Edit sometimes deleted Guardian quotes you had not asked about** (about one edit in four, with both Groq and OpenAI). They could not be recovered | Quotes are removed only when your instructions ask for it. In testing: 0 of 33 unrelated edits lost a quote, and 12 of 12 requests to remove one were followed exactly |
+| Pressing Accept while an Edit was still running saved the edit but left the old version in the PDF | Edit, Accept and Delete lock each other while one runs, and the server checks again before saving an edit |
+| Quotes ending in a quotation lost their closing quote mark (`…is a crime.` without `”`) | The mark is kept. Every stored quote was checked word for word against its article |
+| When Groq's daily allowance ran out, the app retried for over a minute, then said "Try again in a minute" | It says at once that the daily allowance is used up |
+| A blank key in `.env` (`GROQ_API_KEY=`) let the app start | The app names it at startup, like a missing key |
+| Searching All Words for "etat" did not find "raison d'état" | Search ignores accents, like the rest of the app |
+| Long words on accepted cards were broken in the middle ("inconsequ / ential") or ran under the badge | The badge sits above the word |
 
 ## Known limitations and remaining challenges
 
 - **Speed of Accept and Delete grows with your collection.** Each one rebuilds
   the whole PDF: about 13 seconds at 1,500 accepted entries, and nearly a minute
   at 5,000. A second Accept waits for the first to finish.
-- **Groq's free tier causes pauses.** Opening many new entries quickly can pause
-  for up to a minute. A paid Groq tier, or a smaller model in `LLM_MODEL`, would
-  avoid this.
+- **Groq's free tier causes pauses and has a daily cap.** Opening many new entries
+  quickly can pause for up to a minute, and about 130 new entries a day use up
+  the 200,000-token daily allowance. OpenAI (`openai/gpt-4o-mini`) or a paid Groq
+  tier avoids both.
 - **The Guardian's free key has a daily limit.** Each newly opened entry uses
   one search.
 - **Pronunciations come from the language model.** They are usually right but
-  not always. One test gave an American rather than British pronunciation for
-  "au contraire". Correct it with Edit, e.g. "use the British pronunciation".
+  not always, with Groq and OpenAI alike. Foreign phrases and stress are the
+  weak spots: both got "raison d'état" wrong, and one card used American
+  spelling ("savory"). Correct them with Edit, e.g. "use the British
+  pronunciation".
 - **Rare entries may have fewer than three Guardian quotes.** Written examples
   fill the gaps.
 - **Quotes are only as good as their source.** The Guardian sometimes returns
@@ -221,7 +235,7 @@ each is now handled.
 ## For developers
 
 ```
-uv run pytest                      # 91 tests; no API calls, real data untouched
+uv run pytest                      # 100 tests; no API calls, real data untouched
 uv run build_vocab.py              # check the vocabulary part files
 uv run build_vocab.py --write      # rebuild VOCABBASE.TXT from parts/
 ```

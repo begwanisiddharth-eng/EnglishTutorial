@@ -15,6 +15,7 @@ from pydantic import BaseModel
 import config
 import db
 import journal
+import llm
 import pdf
 
 STATIC = Path(__file__).parent / "static"
@@ -89,6 +90,8 @@ def llm_failed(request: Request, exc: openai.APIError):
         return error(502, "The LLM provider rejected the API key in .env.")
     if status == 404:
         return error(502, f"The LLM provider does not know the model {config.LLM_MODEL}. Check LLM_MODEL in .env.")
+    if llm.daily_limit_reached(exc):
+        return error(502, "Groq's daily token allowance is used up. It refills gradually; try again later.")
     return error(502, "The LLM service failed. Try again in a minute.")
 
 

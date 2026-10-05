@@ -24,9 +24,10 @@ PLACEHOLDERS = {
 }
 INFLECTIONS = r"(?:s|es|d|ed|ing|er|ers|est|ly)?"
 ARTICLE_WORDS = {"a", "an", "the"}
-# A sentence ends at . ! or ? before a capital, digit or opening quote. The Guardian also separates
-# author notes and reader-letter footers with a bullet, so a bullet ends a sentence too.
-SENTENCE_END = re.compile(r"(?<=[.!?])[\"”’]?\s+(?=[\"“‘A-Z0-9])|\s*•\s*")
+# A sentence ends at . ! or ? (and any closing quote, kept by the lookbehind) before a capital, digit
+# or opening quote. The Guardian also separates author notes and reader-letter footers with a
+# bullet, so a bullet ends a sentence too.
+SENTENCE_END = re.compile(r"(?:(?<=[.!?])|(?<=[.!?][\"”’]))\s+(?=[\"“‘A-Z0-9])|\s*•\s*")
 
 
 def core_words(entry):

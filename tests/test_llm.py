@@ -6,7 +6,7 @@ import pytest
 import tenacity
 
 import llm
-from conftest import groq_invalid_key
+from conftest import groq_daily_limit, groq_invalid_key
 
 
 def reply(json_text):
@@ -43,10 +43,45 @@ def test_choose_quotes_retries_out_of_range_numbers(monkeypatch):
     assert len(calls) == 2
 
 
+def entry_with_quotes(count):
+    """Return an opened entry with count Guardian quotes and one written example."""
+    quotes = [{"text": f"quote {n}", "source": "The Guardian", "title": "t", "url": "u", "date": "2025-01-02"}
+              for n in range(1, count + 1)]
+    return {"entry": "abate", "pronunciation": "/x/", "respelling": "X", "meaning": "m",
+            "detail": {"senses": [], "examples": quotes + [{"text": "w", "source": None}],
+                       "synonyms": [], "antonyms": []}}
+
+
+def revision_reply(**quote_fields):
+    return ('{"pronunciation": "/x/", "respelling": "X", "meaning": "shorter", "senses": [],'
+            ' "written_examples": ["w"], "synonyms": [], "antonyms": [], '
+            + ", ".join(f'"{k}": {v}' for k, v in quote_fields.items()) + "}")
+
+
+def test_revise_keeps_quotes_the_reply_does_not_mention(monkeypatch):
+    stub_completion(monkeypatch, [revision_reply(keep_quotes=[], drop_quotes=[],
+                                                 feedback_asks_to_remove_quotes="false")])
+    _, detail = llm.revise(entry_with_quotes(3), "shorten the meaning", 5)
+    assert [e["text"] for e in detail["examples"]] == ["quote 1", "quote 2", "quote 3", "w"]
+
+
+def test_revise_ignores_drops_the_feedback_did_not_ask_for(monkeypatch):
+    stub_completion(monkeypatch, [revision_reply(drop_quotes=[2], feedback_asks_to_remove_quotes="false")])
+    _, detail = llm.revise(entry_with_quotes(3), "shorten the meaning", 5)
+    assert [e["text"] for e in detail["examples"]] == ["quote 1", "quote 2", "quote 3", "w"]
+
+
+def test_revise_drops_only_the_quotes_named(monkeypatch):
+    stub_completion(monkeypatch, [revision_reply(drop_quotes=[2], feedback_asks_to_remove_quotes="true")])
+    _, detail = llm.revise(entry_with_quotes(3), "drop the second quote", 5)
+    assert [e["text"] for e in detail["examples"]] == ["quote 1", "quote 3", "w"]
+
+
 @pytest.mark.parametrize("error", [
     litellm.AuthenticationError("bad key", llm_provider="groq", model="m"),
     litellm.NotFoundError("no model", llm_provider="groq", model="m"),
     groq_invalid_key(),
+    groq_daily_limit(),
 ])
 def test_permanent_errors_are_not_retried(monkeypatch, error):
     calls = stub_completion(monkeypatch, [error] * 4)

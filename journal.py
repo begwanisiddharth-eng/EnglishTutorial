@@ -12,7 +12,7 @@ DAILY_COUNT = 5
 MAX_EXAMPLES = 5
 # Serialises additions to a day's page, so overlapping requests cannot both make the daily pick.
 PAGE_LOCK = threading.Lock()
-# Serialises accept and delete, which read the collection, rebuild the PDF and then write.
+# Serialises accept, delete and the write of a revision, which must not interleave.
 COLLECTION_LOCK = threading.Lock()
 # One lock per entry, so concurrent opens of the same entry generate its detail only once.
 DETAIL_LOCKS = {}
@@ -127,14 +127,20 @@ def editable(entry):
 
 
 def revise(entry_id, feedback):
-    """Revise an entry's content according to the learner's feedback."""
+    """Revise an entry's content according to the learner's feedback.
+
+    The LLM call runs outside COLLECTION_LOCK; the entry is checked again under it before
+    writing, because it may have been accepted or deleted in the meantime.
+    """
     entry = existing(entry_id)
     editable(entry)
     if not feedback.strip():
         raise Refused("Write what should change first.")
     card, new_detail = llm.revise(entry, feedback, MAX_EXAMPLES)
-    db.update_card(entry_id, card)
-    db.set_detail(entry_id, new_detail)
+    with COLLECTION_LOCK:
+        editable(existing(entry_id))
+        db.update_card(entry_id, card)
+        db.set_detail(entry_id, new_detail)
     return db.get(entry_id)
 
 

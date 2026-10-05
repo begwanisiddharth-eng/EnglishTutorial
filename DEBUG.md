@@ -1,223 +1,93 @@
 # Debug report
 
-Word Bank (renamed from Word Hoard), 5 October 2026. Covers the third code review
-(`REVIEW.md`, written at `a45a44e`), the bugs found by testing with **real Groq and
-Guardian calls**, the fixes, and the end-to-end retest.
+Word Bank, 5 October 2026, fourth round. Covers the end-to-end test that produced
+REVIEW.md, the fixes, and the retest. Earlier rounds are in git history.
 
 ## How it was tested
 
-- **Reproduce first.** Every finding was reproduced before anything was decided:
-  probes through the test fixtures, direct inspection, a real browser, or real
-  API calls.
-- **Real services.** The LLM was Groq (`groq/openai/gpt-oss-120b`, from `.env`)
-  and The Guardian Open Platform. Keys were loaded with
-  `uv run --env-file .env`; none were copied or printed.
-- **Real data protected.** Every server run used a scratch copy of the code
-  with its own copy of `data/` and `output/`. The real files are unchanged
-  from `HEAD`.
-- **Regression tests.** Each fix has one, and each was run against the unfixed
-  code to show it detects the bug.
+- **Reproduce first.** Each defect was reproduced, its root cause shown, and a
+  regression test written. Each test was run against the unfixed code and
+  failed there. The one exception is L1: its test needs a function the fix
+  introduces, so the bug was shown directly with old and new `.env` loading
+  instead.
+- **Real services.** Groq (`groq/openai/gpt-oss-120b`), OpenAI
+  (`openai/gpt-4o-mini`, chosen per run with `LLM_MODEL=… uv run --env-file
+  .env`), and The Guardian. Keys were never printed or copied.
+- **Real data protected.** Every server ran from a scratch copy. `data/` and
+  `output/` are unchanged from `HEAD`.
+- **Browser.** Chromium through Playwright. PDF text was read back with
+  `pypdf` (`uv run --with`, not a project dependency).
 
-## Bugs found only with real calls
+## What was found, and how it was proved
 
-These did not show up in the 87 offline tests. They appeared as soon as Groq and
-The Guardian were really called.
-
-### 1. Groq's per-minute limit made normal use fail
-
-**Symptom.** Opening one new entry three times at once returned "The LLM service
-failed. Try again in a minute." for the first request.
-
-**Root cause.** Groq's on-demand tier limits this model to 8,000 tokens per
-minute. One detail request uses about 1,500–1,600 tokens, so a handful of opened
-entries reaches the cap. Groq's own error message says it:
-
-```
-RateLimitError: Rate limit reached for model `openai/gpt-oss-120b` ... on tokens per minute (TPM):
-Limit 8000, Used 6899, Requested 1599. Please try again in 3.735s.
-```
-
-The app retried 4 times, waiting 2, 4 and 8 s: 14 s in all, against a limit
-measured over 60 s. Groq also returned one `ServiceUnavailableError` ("over
-capacity"). litellm does not pass Groq's `retry-after` header on
-(`error.response.headers` had none), so the wait cannot be read from the
-response. It appears only in the message text.
-
-**Fix (`llm.py`).** Exponential backoff capped at 20 s, stopping after 90 s
-(`RETRY_SECONDS`) or 8 attempts (`MAX_ATTEMPTS`). A rate-limited attempt is
-refused in about 0.1 s and uses no tokens, so the extra attempts cost nothing.
-A fake-clock test proves a one-minute limit is waited out, and that a limit
-that never lifts gives up within the budget. The old policy fails the first
-test.
-
-**Real result.** Two full end-to-end runs absorbed 26 and 18 failed attempts
-with no error reaching the user (0 × 502). The busiest steps took 20–40 s
-instead of failing.
-
-### 2. A wrong Groq key was retried for 74 s, then misreported
-
-**Symptom.** With a wrong `GROQ_API_KEY`, opening an entry took **74.2 s** and
-then said "The LLM service failed. Try again in a minute." The intended message
-is "The LLM provider rejected the API key in .env.", given at once.
-
-**Root cause.** litellm reports Groq's 401 as a `BadRequestError` carrying
-`status_code` 401, not as an `AuthenticationError`. Both the "do not retry"
-rule and the server's message were keyed on the exception class:
-
-```
-litellm.exceptions BadRequestError | status: 401
-isinstance litellm.AuthenticationError: False
-GroqException - {"error":{"message":"Invalid API Key","code":"invalid_api_key"}}
-```
-
-**Fix.**
-- `llm.worth_retrying` judges by HTTP status: 401, 403 and 404 are permanent,
-  and so are non-`Exception` errors such as `KeyboardInterrupt`.
-- `server.llm_failed` picks its message from the same status, replacing two
-  class-based handlers.
-- Tests reproduce Groq's exact error shape; they fail on the old code.
-
-**Real result.** A wrong Groq key now gets the right message in **0.6 s**. A
-wrong Guardian key gets "The Guardian rejected GUARDIAN_API_KEY. Check it in
-.env." in 6.7 s. Neither stores an empty detail.
-
-### 3. Guardian footers glued onto quotes
-
-**Symptom.** "mum's the word" was shown the quote "Mum's the word! • Anthony
-Watt writes a regular blog for SocietyGuardian.co.uk on his experiences of
-being an adoptive father."
-
-**Root cause.** The Guardian puts a "•" bullet before author notes and
-reader-letter footers. The sentence splitter only broke at . ! ? followed by a
-capital, so the footer stayed attached. In real searches, 2 of 44 candidates
-were affected; the other was "Kathleen Askew Hayling Island, Hampshire • Have
-an opinion on anything you've read in the Guardian today?"
-
-**Fix (`guardian.py`).** A bullet is also a sentence boundary. The fragments it
-separates are under 8 words, so the length rule drops them. Real searches now
-return 0 such candidates, and a test covers it.
-
-## Review findings
-
-| # | Finding | Verdict | Evidence |
+| # | Defect | Proof before the fix | Proof after |
 |---|---|---|---|
-| H1 | Concurrent accepts lose an entry or blame a PDF viewer | **Genuine, fixed** | Two parallel accepts: one refused with "vocabulary.pdf is open in another program" though nothing was open |
-| H2 | A malformed Guardian date blocks PDF builds | Not fixed | Unreachable: dates come from the API, and quotes cannot be edited (revise keeps them by number) |
-| H3 | Deleted `vocab.db` not recreated | **Genuine, fixed** | `OperationalError: no such table`. A regression from caching the schema in the previous round |
-| M1 | Concurrent opens of one entry pay several times | **Genuine, fixed** | 3 parallel opens → 3 `entry_detail` calls |
-| M2 | `PAGE_LOCK` held across the LLM call | Not a bug | It is what stops the daily pick running twice |
-| M3 | `/api/accepted` sends full details | Not a bug | Loopback-only; fine at current size |
-| M4 | `openai` imported but not declared | **Genuine, fixed** | Declared. The review's alternative, `litellm.APIError`, would not catch litellm's errors |
-| M5 | No linter | Checked | `ruff check`: style only (import order, nested `with`, naive `date.today()`, which is intended) |
-| M6 | Progress data tracked in git | Owner's decision | Unchanged |
-| L1 | `start.sh` not executable | **Genuine, fixed** | `100644` → `100755` |
-| L2 | Empty pool still calls the LLM | **Genuine, fixed** | One paid call with a bare `Entries:` prompt |
-| L3 | No temperature | Not fixed | No evidence it reduces retries |
-| L4 | "5 more words added" hardcoded | **Genuine, fixed** | Toast reports the real count; an exhausted list is refused |
-| L5 | PDF popup blocked | Not reproduced | Opens in Chromium |
-| L6 | Drawer not a dialog; focus escapes | **Genuine, fixed** | Tab reached the *closed* drawer's hidden Close button, and left the open drawer |
-| L7 | Double Enter sends two adds | **Genuine, fixed** | Two `POST /api/today/add` in the server log |
-| L8–L10 | Orphan rows, `restore` order, `to_dict` key order | Not bugs | Inert, harmless, or unreachable |
-| L11 | No split before a digit | **Genuine, fixed** | `"…1984. 2001 was…"` stayed one sentence |
-| L12 | First-word placeholders ignored | **False** | Already fixed in `cfce446`, and tested |
-| L13, L14, L17 | Day validation, `nosniff`, import side effects | Not bugs | Parameterised SQL; typed JSON; README says to copy the whole folder |
-| L15 | Stale artifacts | Cleaned | Probe bytecode removed |
-| L16 | `detail` reads twice | Addressed | Restructured for M1, with a comment |
+| H1 | Edit deleted Guardian quotes unasked | Groq: 7 of 24 unrelated revisions lost quotes; gpt-4o-mini 3 of 12; even an ungated `drop_quotes`, 4 of 33 | Gated: 0 of 33 unrelated, 12 of 12 requested drops exact; end to end 0 of 9 |
+| H2 | Edit raced Accept and Delete | Accept 0.3 s into an Edit: DB had the revised meaning, PDF the old; Delete gave `200 null`; Accept enabled during Edit in the page | Edit refused with "already accepted" / "no longer exists"; DB and PDF agree; footer locked during Edit and Accept (Chromium) |
+| M1 | Closing quote mark cut off | `SENTENCE_END.split('“… crime.” The…')` lost `”`; 2 of 30 stored quotes | 68 stored quotes from two runs checked word for word against their articles: 0 problems |
+| M2 | Groq daily limit retried, wrong message | 74.1 s, then "Try again in a minute" | Live: 0.7 s, "Groq's daily token allowance is used up…" |
+| L1 | Blank key passed startup | `GROQ_API_KEY=` in `.env` gave `missing_keys: []` | `['GROQ_API_KEY']` |
+| L2 | Search not accent-insensitive | "etat" found nothing | "etat" and "ÉTAT" find "raison d'état" |
+| L3 | Card title under the badge | Measured: button 258 px wide in a 229 px card; badge over the title | 20 cards: none overlaps its badge or overflows; no sideways scroll |
 
-## Fixes (all)
-
-- **`llm.py`**: a retry budget that outlasts Groq's per-minute limit, and
-  permanent errors judged by HTTP status.
-- **`server.py`**: one LLM error handler, choosing its message by status.
-- **`journal.py`**
-  - `COLLECTION_LOCK` serialises accept and delete.
-  - `DETAIL_LOCKS` give one lock per entry, so a detail is generated once.
-  - No LLM call when nothing is left to pick.
-- **`db.py`**: the schema runs on each connection (+0.09 ms), so a deleted
-  database is recreated.
-- **`guardian.py`**: sentences also split before a digit and at "•" bullets.
-- **`static/`**
-  - The drawer is a modal dialog: `inert` while closed, and the page behind it
-    `inert` while open.
-  - The add box ignores Enter while busy.
-  - The "5 More" toast shows the real count.
-- **`pyproject.toml`**: `openai` is declared. **`start.sh`**: executable.
-- **Rename**: Word Hoard → Word Bank in the page title and header, the PDF
-  (title, title page, footer), the start scripts, README and CLAUDE.md. The
-  vocabulary entry "hoard" is unchanged. The existing `output/vocabulary.pdf`
-  keeps the old title until the next Accept or Delete rebuilds it.
-
-## Retest results
+## Retest
 
 ### Automated
 
-`uv run pytest`: **91 passed** (82 before this round). Every new test fails on
-the code before its fix.
+`uv run pytest`: **100 passed** (91 before). Nine tests are new:
 
-### End to end with real Groq and Guardian calls
+- `test_llm.py`: quotes kept when the reply omits them; drops ignored unless
+  the gate is set; drops applied when it is; the daily limit not retried.
+- `test_journal.py`: a revision finishing after Accept, and after Delete.
+- `test_guardian.py`: closing quote marks stay with their sentence.
+- `test_server.py`: the daily-limit message; a blank key in `.env` is named.
 
-25 checks over HTTP against the scratch-copy server, all passing on the final
-code.
+### End to end, gpt-4o-mini and The Guardian
 
-| Check | Result |
+**41 of 41 checks passed** on the fixed code. The server log had 0 tracebacks,
+0 × 5xx and 0 retried LLM attempts. Every 4xx was a deliberate refusal.
+
+| Area | Result |
 |---|---|
-| Daily pick | 5 real cards in 4.3 s; IPA, respelling and meaning well formed; no pronunciation for phrases over two words |
-| Second load | Does not pick again |
-| Details | 3 genuine Guardian quotes each (URL, ISO date, the entry in the text), then written examples, at most 5 |
-| 3 concurrent opens of one entry | One identical detail, generated once |
-| Typed entries with apostrophes | "a baker's dozen" and "one's bark is worse than one's bite" get real quotes, e.g. "the president's bark is worse than his bite" |
-| Typed non-master entry | "zeitgeist" gets real quotes |
-| Refusals | Case variant and blank entry refused with clear messages |
-| Revise | Quotes kept verbatim, feedback applied (shorter meaning, one example fewer); empty feedback refused |
-| Two simultaneous accepts | Both succeed; both are in the PDF, titled Word Bank; both left the word list; accepting again is refused |
-| "5 More" | Adds five real entries |
-| Delete | A typed non-master entry is removed and not added to the list; a master entry returns to the list and leaves the PDF |
-| All Words and past days | All Words is alphabetical; a past day shows only accepted entries |
-| Server log | 0 × 502, 0 tracebacks; the only 400s were the deliberate refusals |
+| Daily pick | 5 cards in 4.2 s; no repick; no pronunciation for long phrases |
+| Typed entries | Placeholder phrase, accented apostrophe, non-master word; case, accent and blank refusals |
+| Detail | 12 concurrent opens (one entry three times) all 200; slowest 5.8 s (Groq: 81 s); the three copies identical; 36 quotes with URL and date |
+| Revise | 9 unrelated edits kept every quote; "Drop the second Guardian quote" dropped exactly that one |
+| Races | Accept and Delete during an Edit both resolved correctly |
+| Accept and PDF | Entries in the PDF; second accept, accept before opening, revise after accept, and past-day changes all refused |
+| Locked PDF | Refused with the viewer message; nothing changed; succeeds after release |
+| Delete | Master entry back in the list and out of the PDF; typed entry not added, and can be typed again |
+| Views and security | 5 More, All Words order, past days, PDF HEAD; foreign `Origin` and `Host` refused |
 
-### Browser, real calls (Chromium)
+### Error paths
 
-- The page is titled Word Bank, with "Word·Bank" in the header.
-- **Open:** clicking "mum's the word" filled the drawer with a real
-  definition, Guardian quotes linked to their articles, and written examples.
-  This is where bug 3 showed up.
-- **Edit:** "Drop the second Guardian quote." removed exactly that quote and
-  kept the other word for word.
-- **Accept:** the toast appeared, the "Accepted" note showed, Edit greyed out
-  and the card got its badge.
-- **PDF:** opened in a new tab, titled Word Bank, with all 5 accepted entries
-  and 13 Guardian links.
-- **Keyboard:** the closed drawer is unreachable; the open drawer keeps Tab
-  inside it; Escape restores the page and focus.
-- **Add box:** a double Enter sends one request.
-- **Empty list:** "5 More" shows the refusal and adds nothing.
+| Case | Result |
+|---|---|
+| Wrong OpenAI key | "The LLM provider rejected the API key in .env." in 1.8 s |
+| Unknown OpenAI model | "…does not know the model openai/no-such-model…" in 1.4 s |
+| Groq daily limit (live) | Its own message in 0.7 s |
+| Wrong Groq key, unknown Groq model, wrong Guardian key | Checked in the first run of this round, on the old code: right messages in 0.6 s, 0.6 s and 4.0 s, nothing stored. These paths were not changed by the fixes |
 
-### Other checks
+### Browser (Chromium, gpt-4o-mini)
 
-- `config.missing_settings()` is empty for `.env`.
-- `build_vocab.py`: 3500/3500 words, 1500/1500 phrases.
-- `data/` and `output/` are unchanged from `HEAD`.
+- **During an Edit:** feedback, Edit, Accept and Delete were all disabled.
+  Afterwards they were enabled again, and all 3 quotes were still there.
+- **During and after Accept:**
+  - The footer was locked while Accept ran.
+  - Afterwards the "Accepted" note showed. Edit and Accept stayed disabled,
+    and Delete stayed enabled.
+  - A cancelled Delete restored the footer.
+- **Console:** 0 errors.
+- **Search and cards:** accent-insensitive search worked, and no card title
+  overlapped its badge.
 
-## Observations, not fixed
+## Observations
 
-- **LLM pronunciation quality.** One card gave "au contraire" the
-  General-American /oʊ/, although the prompt asks for Received Pronunciation.
-  The README already lists pronunciations as a known limitation, correctable
-  with Edit.
-- **Guardian candidates.** Placeholders and names still let in a few
-  irrelevant ones, e.g. "Kathleen Askew" for "askew". The LLM quote chooser
-  rejected them in every run.
-- **Retry cost under contention.** If generation fails for an entry, each
-  request waiting on its lock tries again in turn. With the longer retry
-  budget this did not happen in the real runs.
-
-## Remaining risks
-
-- **PDF rebuild time.** Every accept, and every delete of an accepted entry,
-  rebuilds the whole PDF: about 13 s at 1,500 entries, 55 s at 5,000. A second
-  accept waits for the first.
-- **Groq free tier.** Bursts of new entries can pause for up to a minute (now
-  in the README). A paid tier, or a smaller model in `LLM_MODEL`, would remove
-  the pauses.
-- **Progress data in git.** A checkout of an older commit replaces your
-  progress.
+- **Speed.** gpt-4o-mini served 12 concurrent opens in 5.8 s, with no retries.
+  Groq's free tier took 81 s for 8, near its 90 s retry budget, and its
+  200,000-token daily allowance ran out during testing (twice, counting the
+  earlier run that day).
+- **Pronunciation quality** is similar on both models, and imperfect. Both got
+  "raison d'état" wrong. This is in the README limitations.
+- **Not run:** the gated quote rule on Groq (its daily allowance was used up),
+  and a live wrong-Groq-key run after the fixes (the code path is unchanged).

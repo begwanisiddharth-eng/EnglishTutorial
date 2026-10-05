@@ -2,10 +2,22 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from litellm import validate_environment
 
-load_dotenv(Path(__file__).parent / ".env")
+
+def load_env_file(path):
+    """Load settings from an env file, treating a blank value ("GROQ_API_KEY=") as unset.
+
+    litellm counts a key as present even when it is blank, so a blank one would pass the startup check.
+    """
+    load_dotenv(path)
+    for name in dotenv_values(path):
+        if not os.environ.get(name):
+            os.environ.pop(name, None)
+
+
+load_env_file(Path(__file__).parent / ".env")
 
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
 GUARDIAN_API_KEY = os.environ.get("GUARDIAN_API_KEY", "")

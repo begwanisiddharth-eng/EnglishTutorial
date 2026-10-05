@@ -17,9 +17,18 @@ MAX_ATTEMPTS = 8
 PERMANENT_STATUS = {401, 403, 404}
 
 
+def daily_limit_reached(error):
+    """Return True if Groq refused because the daily token allowance is used up.
+
+    It arrives as the same 429 as the per-minute limit; only the message tells them apart.
+    """
+    return "tokens per day" in str(error)
+
+
 def worth_retrying(error):
     """Return True for transient failures and malformed replies; False for permanent errors and interrupts."""
-    return isinstance(error, Exception) and getattr(error, "status_code", None) not in PERMANENT_STATUS
+    return (isinstance(error, Exception) and getattr(error, "status_code", None) not in PERMANENT_STATUS
+            and not daily_limit_reached(error))
 
 
 retrying = retry(stop=stop_after_attempt(MAX_ATTEMPTS) | stop_after_delay(RETRY_SECONDS),
@@ -78,8 +87,10 @@ Entry: "{entry}"
 Current content (JSON):
 {current}
 
-The Guardian quotes are real published sentences: never reword them. You may only
-keep or drop them, by number, in keep_quotes.
+The Guardian quotes are real published sentences: never reword them. First set
+feedback_asks_to_remove_quotes: true only if the feedback explicitly asks to remove
+one or more Guardian quotes. Only then list their numbers in drop_quotes; otherwise
+leave it empty.
 
 Learner's feedback:
 {feedback}
@@ -109,12 +120,18 @@ class Detail(BaseModel):
 
 
 class Revision(BaseModel):
-    """A complete revised entry; Guardian quotes are referenced by number only."""
+    """A complete revised entry; Guardian quotes are referenced by number only.
+
+    Models dropped quotes unasked: about a quarter of the time when quotes had to be listed to
+    be kept, and still one time in eight when listed to be dropped. So a drop counts only when
+    the model first says the feedback asked for it; the flag comes first so it is decided first.
+    """
+    feedback_asks_to_remove_quotes: bool
+    drop_quotes: list[int]
     pronunciation: str
     respelling: str
     meaning: str
     senses: list[Sense]
-    keep_quotes: list[int]
     written_examples: list[str]
     synonyms: list[str]
     antonyms: list[str]
@@ -199,9 +216,10 @@ def revise(entry, feedback, max_examples):
     prompt = REVISE_PROMPT.format(entry=entry["entry"], current=current, feedback=feedback,
                                   max_examples=max_examples)
     revision = ask(prompt, Revision)
-    if not all(1 <= n <= len(quotes) for n in revision.keep_quotes):
-        raise ValueError(f"quote numbers out of range: {revision.keep_quotes}")
-    kept = [quotes[n - 1] for n in dict.fromkeys(revision.keep_quotes)]
+    dropped = revision.drop_quotes if revision.feedback_asks_to_remove_quotes else []
+    if not all(1 <= n <= len(quotes) for n in dropped):
+        raise ValueError(f"quote numbers out of range: {dropped}")
+    kept = [q for n, q in enumerate(quotes, 1) if n not in dropped]
     written = [{"text": t, "source": None} for t in revision.written_examples]
     card = make_card(entry["entry"], Card(pronunciation=revision.pronunciation,
                                           respelling=revision.respelling, meaning=revision.meaning))

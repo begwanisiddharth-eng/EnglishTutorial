@@ -72,3 +72,12 @@ def test_bullet_separated_footers_are_not_joined_to_quotes():
     article = {"title": "T", "url": "u", "date": "2025-01-02",
                "text": "Mum's the word! • Anthony Watt writes a regular blog for us on his experiences of adoption."}
     assert guardian.candidates("mum's the word", [article]) == []
+
+
+def test_closing_quote_marks_stay_with_their_sentence():
+    article = {"title": "T", "url": "u", "date": "2025-01-02",
+               "text": "He quoted Balzac: “Behind every great fortune the storms abate in time.” Others agreed. "
+                       'She wrote "the winds will abate before the long night is out." Then she left.'}
+    assert [c["text"] for c in guardian.candidates("abate", [article])] == [
+        "He quoted Balzac: “Behind every great fortune the storms abate in time.”",
+        'She wrote "the winds will abate before the long night is out."']
