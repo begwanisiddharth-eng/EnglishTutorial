@@ -27,6 +27,25 @@ def test_remove_and_restore_match_loosely():
     assert len(vocab.load_remaining()) == 5000
 
 
+def test_blank_lines_never_enter_the_pool():
+    vocab.save_remaining([])
+    assert vocab.load_remaining() == []
+    assert vocab.pick(5, set()) == []
+
+
+def test_pick_excludes_by_fold():
+    vocab.save_remaining(["abase", "abash"])
+    assert vocab.pick(2, {vocab.fold("ABASE")}) == ["abash"]
+
+
+def test_master_list_is_read_once(monkeypatch):
+    vocab.master_list()
+    vocab.load_remaining()
+    monkeypatch.setattr(vocab, "BASE_LIST", None)
+    assert vocab.is_phrase("a babe in the woods")
+    vocab.restore("abase")
+
+
 def test_build_vocab_runs_from_any_folder(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / "build_vocab.py")], cwd=tmp_path,
                             capture_output=True, text=True, encoding="utf-8")

@@ -5,6 +5,7 @@ import urllib.error
 import pytest
 
 import guardian
+from conftest import REAL_SEARCH
 
 
 @pytest.mark.parametrize("entry, sentence, expected", [
@@ -13,6 +14,14 @@ import guardian
     ("one's bark is worse than one's bite", "Everyone says his bark is worse than his bite.", True),
     ("bite the bullet", "In the end the minister had to bite the bullet.", True),
     ("a babe in the woods", "He was a babe in the woods when it came to money.", True),
+    ("abate", "We visited the abattoir next door.", False),
+    ("trite", "The reactor produced tritium overnight.", False),
+    ("decry", "Opponents decried the plan.", True),
+    ("abet", "She abetted the escape.", True),
+    ("abate", "The wind is abating.", True),
+    ("imbue", "Every scene is imbued with dread.", True),
+    ("grudging", "He grudgingly agreed.", True),
+    ("moving the goalposts", "They moved the goalposts again.", True),
 ])
 def test_entry_pattern(entry, sentence, expected):
     assert bool(guardian.entry_pattern(entry).search(sentence)) is expected
@@ -48,5 +57,5 @@ def test_search_retries_only_transient_failures(monkeypatch, error, attempts):
 
     monkeypatch.setattr(guardian.urllib.request, "urlopen", failing_urlopen)
     with pytest.raises(type(error)):
-        guardian.search('"abate"')
+        REAL_SEARCH('"abate"')
     assert len(calls) == attempts

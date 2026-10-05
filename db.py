@@ -1,6 +1,8 @@
 """SQLite storage for the entries shown each day, their details and acceptance."""
 import json
 import sqlite3
+from contextlib import closing, contextmanager
+from functools import cache
 from pathlib import Path
 
 from vocab import fold
@@ -20,13 +22,22 @@ CREATE TABLE IF NOT EXISTS entries (
 """
 
 
+@cache
+def create_schema(path):
+    """Create the tables once per database file."""
+    path.parent.mkdir(exist_ok=True)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.executescript(SCHEMA)
+
+
+@contextmanager
 def connect():
-    """Open the database, creating tables on first use."""
-    DB_PATH.parent.mkdir(exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    return conn
+    """Yield a connection for one transaction, committed on success and then closed."""
+    create_schema(DB_PATH)
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        with conn:
+            yield conn
 
 
 def to_dict(row):

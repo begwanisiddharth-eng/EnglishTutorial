@@ -33,6 +33,18 @@ def test_accept_round_trip_and_pdf(client):
     assert [e["entry"] for e in client.get("/api/accepted").json()] == ["abase"]
 
 
+def test_pdf_head_reports_availability_without_body(client):
+    assert client.head("/api/pdf").status_code == 400
+    journal.accept(add_on(TODAY, "abase"))
+    response = client.head("/api/pdf")
+    assert (response.status_code, response.headers["content-type"], response.content) ==         (200, "application/pdf", b"")
+
+
+def test_blank_typed_entry_returns_readable_error(client):
+    response = client.post("/api/today/add", json={"entry": "  "}, headers={"Origin": LOCAL})
+    assert (response.status_code, response.json()) == (400, {"error": "Type a word or phrase to look up."})
+
+
 def test_requests_from_other_sites_are_refused(client):
     assert client.post("/api/today/more", headers={"Origin": "https://evil.example"}).status_code == 403
     assert client.get("/api/today", headers={"Host": "evil.example:8000"}).status_code == 403

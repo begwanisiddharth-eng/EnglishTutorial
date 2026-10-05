@@ -3,14 +3,16 @@ import json
 
 from litellm import AuthenticationError, NotFoundError, completion
 from pydantic import BaseModel, Field
-from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (retry, retry_if_exception_type, retry_if_not_exception_type, stop_after_attempt,
+                      wait_exponential)
 
 import config
 
 TIMEOUT_SECONDS = 120
 # Retry transient failures and malformed replies; a rejected key or unknown model will not recover.
 retrying = retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True,
-                 retry=retry_if_not_exception_type((AuthenticationError, NotFoundError)))
+                 retry=retry_if_exception_type(Exception)
+                 & retry_if_not_exception_type((AuthenticationError, NotFoundError)))
 
 CARD_PROMPT = """You are a lexicographer writing for advanced learners of English.
 For each entry below (a word, phrase, idiom, allusion, or foreign expression

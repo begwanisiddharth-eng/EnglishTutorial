@@ -22,6 +22,7 @@ PLACEHOLDERS = {
     "someone": r"\w+(?:\s\w+)?",
     "something": r"\w+(?:\s\w+)?",
 }
+INFLECTIONS = r"(?:s|es|d|ed|ing|er|ers|est|ly)?"
 ARTICLE_WORDS = {"a", "an", "the"}
 SENTENCE_END = re.compile(r"(?<=[.!?])[\"”’]?\s+(?=[\"“‘A-Z])")
 
@@ -34,15 +35,24 @@ def core_words(entry):
     return words
 
 
-def inflectable(word):
-    """Return a regex matching a word and its common inflections."""
+def stems(word):
+    """Return the forms of a word that regular inflection suffixes attach to."""
+    forms = {word}
     if word.endswith("ing") and len(word) > 5:
-        stem = word[:-3]
-    elif word.endswith("e") and len(word) > 4:
-        stem = word[:-1]
-    else:
-        stem = word
-    return re.escape(stem).replace("'", APOSTROPHE) + r"\w{0,4}"
+        forms.add(word[:-3])                       # moving -> moved, moves
+    if word.endswith("e"):
+        forms.add(word[:-1])                       # abate -> abating
+    if re.search(r"[^aeiou]y$", word):
+        forms.add(word[:-1] + "i")                 # decry -> decried, decries
+    if re.search(r"[^aeiou][aeiou][bdgklmnprt]$", word):
+        forms.add(word + word[-1])                 # abet -> abetted, abetting
+    return sorted(forms, key=len, reverse=True)
+
+
+def inflectable(word):
+    """Return a regex matching a word and its regular inflections, but not longer unrelated words."""
+    alternatives = "|".join(re.escape(s).replace("'", APOSTROPHE) for s in stems(word))
+    return f"(?:{alternatives}){INFLECTIONS}"
 
 
 def transient(error):

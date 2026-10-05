@@ -78,16 +78,25 @@ class JournalDoc(BaseDocTemplate):
         frame = Frame(MARGIN, MARGIN, A4[0] - 2 * MARGIN, A4[1] - 2 * MARGIN, id="main")
         self.addPageTemplates([PageTemplate(id="main", frames=frame, onPage=page_footer)])
 
+    def beforeDocument(self):
+        """Restart heading numbering on each build pass, so bookmark keys match between passes."""
+        self.headings = 0
+
     def afterFlowable(self, flowable):
-        """Bookmark headings and register them in the contents and the PDF outline."""
+        """Bookmark headings and register them in the contents and the PDF outline.
+
+        Keys are generated rather than taken from the heading text, because ReportLab's contents
+        page cannot handle quotes or apostrophes in a key.
+        """
         level = LEVELS.get(getattr(getattr(flowable, "style", None), "name", None))
         if level is None:
             return
+        self.headings += 1
         text = flowable.getPlainText()
-        key = f"{level}-{text}"
+        key = f"heading-{self.headings}"
         self.canv.bookmarkPage(key)
         self.canv.addOutlineEntry(text, key, level=level)
-        self.notify("TOCEntry", (level, text, self.page, key))
+        self.notify("TOCEntry", (level, escape(text), self.page, key))
 
 
 def para(text, style_name):
@@ -100,7 +109,7 @@ def source_line(example):
     if not example["source"]:
         return para("— Example sentence", "source")
     when = date.fromisoformat(example["date"]).strftime("%d %b %Y")
-    link = f'<a href="{escape(example["url"])}" color="#2563eb">{escape(example["source"])}, {when}</a>'
+    link = f'<a href="{escape(example["url"], {'"': "&quot;"})}" color="#2563eb">{escape(example["source"])}, {when}</a>'
     return Paragraph(f"— {link}", STYLES["source"])
 
 

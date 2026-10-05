@@ -43,13 +43,17 @@ The browser opens at http://127.0.0.1:8000. Close the terminal window to stop.
     quotes are never reworded, only kept or dropped.
   - **Accept**: the entry is final. It goes into the PDF and leaves the
     vocabulary list for good. Edit and Accept are then greyed out.
-  - **Delete**: removes the entry. If it was accepted, it also leaves the PDF and
-    returns to the vocabulary list.
+  - **Delete**: removes the entry. If it was accepted, it also leaves the PDF; an
+    entry from the 5,000 returns to the vocabulary list, and one you typed
+    yourself can simply be looked up again.
 - **Browse**: a calendar of past days. A past day is read-only and shows only the
   entries accepted that day; days with none are not shown.
 - **All Words**: every accepted entry, alphabetically, with Delete.
 - **PDF**: accepted entries, Words then Phrases, alphabetical, with a linked
   contents page. Saved at `output/vocabulary.pdf`.
+
+Everything works from the keyboard: Tab to a card or word, Enter to open it,
+Escape to close the side panel.
 
 ## Moving the app
 
@@ -78,4 +82,6 @@ Anyone you give the folder to can use your API keys.
 
 - Pronunciations come from the LLM and are sometimes wrong. Correct them with Edit.
 - Rare entries may have fewer than three usable Guardian quotes. Written examples fill the gaps.
+- Accept and Delete rebuild the whole PDF, which takes about 13 seconds at
+  1,500 accepted entries and nearly a minute at 5,000.
 - The audio button uses the browser's built-in voice, which reads foreign phrases as if they were English.

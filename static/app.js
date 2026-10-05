@@ -132,9 +132,9 @@ function skeletons(count) {
 function cardHTML(entry, context) {
   const badge = entry.accepted ? '<span class="card-badge">accepted</span>' : "";
   return `
-    <div class="card" id="card-${entry.id}" role="button" tabindex="0" onclick="openDrawer(${entry.id}, '${context}')">
+    <div class="card" id="card-${entry.id}">
       ${badge}
-      <div class="card-word">${esc(entry.entry)}</div>
+      <button class="card-word card-open" type="button" onclick="openDrawer(${entry.id}, '${context}')">${esc(entry.entry)}</button>
       <div class="pronunciation">${pronunciationHTML(entry)}</div>
       <div class="card-def">${esc(entry.meaning)}</div>
     </div>`;
@@ -252,11 +252,11 @@ function renderList() {
     e.entry.toLowerCase().includes(query) || e.meaning.toLowerCase().includes(query));
   document.getElementById("word-list").innerHTML = shown.length
     ? shown.map((e) => `
-      <li role="button" tabindex="0" onclick="openDrawer(${e.id}, 'all')">
-        <span class="wl-word">${esc(e.entry)}</span>
+      <li>
+        <button class="wl-word wl-open" type="button" onclick="openDrawer(${e.id}, 'all')">${esc(e.entry)}</button>
         <span class="wl-meaning">${esc(e.meaning)}</span>
         <span class="wl-date">${fmtDate(e.day)}</span>
-        <button class="wl-delete" onclick="event.stopPropagation(); deleteEntry(${e.id}, 'all')">Delete</button>
+        <button class="wl-delete" onclick="deleteEntry(${e.id}, 'all')">Delete</button>
       </li>`).join("")
     : '<div class="empty">No accepted entries yet.</div>';
 }
@@ -375,14 +375,18 @@ function closeDrawer() {
   document.getElementById("overlay").classList.remove("open");
   document.getElementById("drawer").classList.remove("open");
   document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
+  const redrawnCard = document.querySelector(`#card-${activeId} .card-open`);
   activeId = null;
-  if (focusBeforeDrawer?.isConnected) focusBeforeDrawer.focus();
+  (focusBeforeDrawer?.isConnected ? focusBeforeDrawer : redrawnCard)?.focus();
+  focusBeforeDrawer = null;
 }
 
 /** Delete an entry after confirmation and refresh the views that showed it. */
 async function deleteEntry(entryId, context) {
   const entry = known.get(entryId);
-  const note = entry.accepted ? " It will be removed from the PDF and returned to the vocabulary list." : "";
+  const note = entry.accepted
+    ? " It will be removed from the PDF. An entry from the word list returns to it; one you typed can be looked up again."
+    : "";
   if (!confirm(`Delete "${entry.entry}"?${note}`)) return;
   try {
     await api(`/api/entries/${entryId}`, "DELETE");
@@ -409,11 +413,11 @@ function deleteActive() {
    ============================================================ */
 /** Open the PDF in a new tab, or explain why there is none yet. */
 async function openPdf() {
-  const response = await fetch("/api/pdf");
+  const response = await fetch("/api/pdf", { method: "HEAD" });
   if (response.ok) {
     window.open("/api/pdf", "_blank");
   } else {
-    toast((await response.json()).error, true);
+    await api("/api/pdf").catch((error) => toast(error.message, true));
   }
 }
 

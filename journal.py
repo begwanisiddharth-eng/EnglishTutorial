@@ -1,4 +1,5 @@
 """Rules for daily pages: what is shown, added, deleted and accepted, and when."""
+import threading
 from datetime import date
 
 import db
@@ -9,6 +10,8 @@ import vocab
 
 DAILY_COUNT = 5
 MAX_EXAMPLES = 5
+# Serialises additions to a day's page, so overlapping requests cannot both make the daily pick.
+PAGE_LOCK = threading.Lock()
 
 
 class Refused(Exception):
@@ -20,18 +23,30 @@ def today():
     return date.today().isoformat()
 
 
+def shown_on(day):
+    """Return the folded entries already on a day's page."""
+    return {vocab.fold(e["entry"]) for e in db.day_entries(day)}
+
+
+def pick_into(day, count):
+    """Pick entries from the working list that are not yet on the day's page, and add them."""
+    db.insert_cards(day, llm.card_summaries(vocab.pick(count, shown_on(day))))
+
+
 def add_random(count):
-    """Pick entries from the working list, summarize them and add them to today."""
-    shown = {e["entry"] for e in db.day_entries(today())}
-    db.insert_cards(today(), llm.card_summaries(vocab.pick(count, shown)))
+    """Add count random entries to today's page."""
+    with PAGE_LOCK:
+        pick_into(today(), count)
 
 
 def todays_entries():
     """Return today's entries, making the daily pick on the first visit of the day."""
-    if not db.day_started(today()):
-        add_random(DAILY_COUNT)
-        db.start_day(today())
-    return db.day_entries(today())
+    day = today()
+    with PAGE_LOCK:
+        if not db.day_started(day):
+            pick_into(day, DAILY_COUNT)
+            db.start_day(day)
+    return db.day_entries(day)
 
 
 def day_entries(day):
@@ -50,10 +65,14 @@ def refuse_if_accepted(text):
 def add_typed(text):
     """Add an entry the user typed to today's page."""
     text = text.strip()
-    if vocab.fold(text) in {vocab.fold(e["entry"]) for e in db.day_entries(today())}:
-        raise Refused(f'"{text}" is already on today\'s page.')
-    refuse_if_accepted(text)
-    db.insert_cards(today(), llm.card_summaries([text]))
+    if not text:
+        raise Refused("Type a word or phrase to look up.")
+    day = today()
+    with PAGE_LOCK:
+        if vocab.fold(text) in shown_on(day):
+            raise Refused(f'"{text}" is already on today\'s page.')
+        refuse_if_accepted(text)
+        db.insert_cards(day, llm.card_summaries([text]))
 
 
 def guardian_quotes(entry):
@@ -115,7 +134,7 @@ def publish_pdf(entries):
     try:
         pdf.build(entries)
     except PermissionError:
-        raise Refused("vocabulary.pdf is open in another program. Close it and try again.")
+        raise Refused("vocabulary.pdf is open in another program. Close it and try again.") from None
 
 
 def accept(entry_id):

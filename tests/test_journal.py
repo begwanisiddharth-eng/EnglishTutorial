@@ -1,8 +1,12 @@
 """The daily-page rules in journal.py."""
+import threading
+import time
+
 import pytest
 
 import db
 import journal
+import llm
 import pdf
 import vocab
 from conftest import TODAY, YESTERDAY, add_on, viewer_lock
@@ -129,3 +133,64 @@ def test_delete_with_locked_pdf_changes_nothing():
             journal.delete(entry_id)
     assert accepted_texts() == ["abase"]
     assert "abase" not in vocab.load_remaining()
+
+
+def test_entry_with_apostrophe_can_be_accepted():
+    entry_id = add_on(TODAY, "a baker's dozen")
+    assert journal.accept(entry_id)["accepted"]
+    assert "a baker's dozen" not in vocab.load_remaining()
+
+
+def test_blank_typed_entry_is_refused():
+    with pytest.raises(journal.Refused, match="Type a word or phrase"):
+        journal.add_typed("   ")
+    assert db.day_entries(TODAY) == []
+
+
+def test_concurrent_first_loads_make_one_daily_pick(monkeypatch):
+    slow = llm.completion
+
+    def slow_completion(**kwargs):
+        time.sleep(0.2)
+        return slow(**kwargs)
+
+    monkeypatch.setattr(llm, "completion", slow_completion)
+    threads = [threading.Thread(target=journal.todays_entries) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(db.day_entries(TODAY)) == journal.DAILY_COUNT
+
+
+def test_random_pick_skips_case_variant_already_on_page():
+    vocab.save_remaining(["abase", "abash"])
+    journal.add_typed("Abase")
+    journal.add_random(2)
+    assert [e["entry"] for e in db.day_entries(TODAY)] == ["Abase", "abash"]
+
+
+def test_detail_puts_guardian_quotes_before_written_examples():
+    detail = db.get(add_on(TODAY, "abate"))["detail"]
+    sources = [e["source"] for e in detail["examples"]]
+    assert sources == ["The Guardian", None, None]
+    assert "abate" in detail["examples"][0]["text"]
+
+
+def test_revise_keeps_chosen_quotes_and_applies_the_rest():
+    entry_id = add_on(TODAY, "abate")
+    quote = db.get(entry_id)["detail"]["examples"][0]
+    revised = journal.revise(entry_id, "make the meaning shorter")
+    assert revised["meaning"] == "revised meaning"
+    assert revised["detail"]["examples"] == [quote, {"text": "A revised example.", "source": None}]
+
+
+def test_deleted_typed_entry_can_be_looked_up_again():
+    journal.add_typed("zugzwang")
+    entry_id = db.day_entries(TODAY)[-1]["id"]
+    journal.detail(entry_id)
+    journal.accept(entry_id)
+    journal.delete(entry_id)
+    assert "zugzwang" not in vocab.load_remaining()
+    journal.add_typed("zugzwang")
+    assert db.day_entries(TODAY)[-1]["entry"] == "zugzwang"

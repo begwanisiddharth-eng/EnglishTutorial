@@ -18,7 +18,7 @@ def stub_completion(monkeypatch, outcomes):
     def completion(**kwargs):
         calls.append(kwargs)
         outcome = outcomes[len(calls) - 1]
-        if isinstance(outcome, Exception):
+        if isinstance(outcome, BaseException):
             raise outcome
         return reply(outcome)
 
@@ -48,6 +48,13 @@ def test_choose_quotes_retries_out_of_range_numbers(monkeypatch):
 def test_permanent_errors_are_not_retried(monkeypatch, error):
     calls = stub_completion(monkeypatch, [error] * 4)
     with pytest.raises(type(error)):
+        llm.entry_detail("abate")
+    assert len(calls) == 1
+
+
+def test_keyboard_interrupt_is_not_retried(monkeypatch):
+    calls = stub_completion(monkeypatch, [KeyboardInterrupt()] * 4)
+    with pytest.raises(KeyboardInterrupt):
         llm.entry_detail("abate")
     assert len(calls) == 1
 

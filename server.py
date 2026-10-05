@@ -144,7 +144,7 @@ def accepted():
     return db.accepted_entries()
 
 
-@app.get("/api/pdf")
+@app.api_route("/api/pdf", methods=["GET", "HEAD"])
 def download_pdf():
     """Return the PDF of accepted entries."""
     if not pdf.PDF_PATH.exists():
