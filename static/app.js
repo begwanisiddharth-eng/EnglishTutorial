@@ -6,6 +6,7 @@ let activeDates = new Set();
 let allEntries = [];
 const known = new Map();      // entry id -> entry, for instant drawer headers
 let activeId = null;
+let focusBeforeDrawer = null;
 let drawerContext = "today";  // "today" | "browse" | "all"
 let calYear = 0, calMonth = 0, selectedDate = null;
 
@@ -21,9 +22,10 @@ async function api(path, method = "GET", body = null) {
   const options = { method, headers: { "Content-Type": "application/json" } };
   if (body) options.body = JSON.stringify(body);
   const response = await fetch(path, options);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
+  if (response.ok) return response.json();
+  const isJson = response.headers.get("content-type")?.includes("application/json");
+  const data = isJson ? await response.json() : {};
+  throw new Error(data.error || `Server error ${response.status}. Check the terminal window for details.`);
 }
 
 /** Escape text for safe insertion into HTML. */
@@ -96,6 +98,19 @@ document.addEventListener("click", (event) => {
 }, true);
 
 /* ============================================================
+   Keyboard
+   ============================================================ */
+// Enter or Space activates clickable cards, rows and dates; Escape closes the drawer.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeId !== null) {
+    closeDrawer();
+  } else if ((event.key === "Enter" || event.key === " ") && event.target.getAttribute("role") === "button") {
+    event.preventDefault();
+    event.target.click();
+  }
+});
+
+/* ============================================================
    Navigation
    ============================================================ */
 function showView(name) {
@@ -117,7 +132,7 @@ function skeletons(count) {
 function cardHTML(entry, context) {
   const badge = entry.accepted ? '<span class="card-badge">accepted</span>' : "";
   return `
-    <div class="card" id="card-${entry.id}" onclick="openDrawer(${entry.id}, '${context}')">
+    <div class="card" id="card-${entry.id}" role="button" tabindex="0" onclick="openDrawer(${entry.id}, '${context}')">
       ${badge}
       <div class="card-word">${esc(entry.entry)}</div>
       <div class="pronunciation">${pronunciationHTML(entry)}</div>
@@ -146,7 +161,8 @@ async function loadToday() {
     renderCards(data.entries, "today-cards", "today", "No entries today.");
     document.getElementById("today-actions").hidden = false;
   } catch (error) {
-    document.getElementById("today-cards").innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    document.getElementById("today-cards").innerHTML = `<div class="empty">${esc(error.message)}
+      <div><button class="btn btn-secondary retry" onclick="loadToday()">Try again</button></div></div>`;
   }
 }
 
@@ -202,7 +218,7 @@ function renderCalendar() {
     const ds = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const isActive = activeDates.has(ds);
     const cls = "cal-cell " + (isActive ? "active" : "inactive") + (ds === selectedDate ? " selected" : "");
-    const click = isActive ? `onclick="selectDate('${ds}')"` : "";
+    const click = isActive ? `role="button" tabindex="0" onclick="selectDate('${ds}')"` : "";
     html += `<div class="${cls}" ${click}>${d}</div>`;
   }
   document.getElementById("cal-grid").innerHTML = html;
@@ -236,7 +252,7 @@ function renderList() {
     e.entry.toLowerCase().includes(query) || e.meaning.toLowerCase().includes(query));
   document.getElementById("word-list").innerHTML = shown.length
     ? shown.map((e) => `
-      <li onclick="openDrawer(${e.id}, 'all')">
+      <li role="button" tabindex="0" onclick="openDrawer(${e.id}, 'all')">
         <span class="wl-word">${esc(e.entry)}</span>
         <span class="wl-meaning">${esc(e.meaning)}</span>
         <span class="wl-date">${fmtDate(e.day)}</span>
@@ -297,6 +313,7 @@ function refreshCard(entry) {
 }
 
 async function openDrawer(entryId, context) {
+  if (activeId === null) focusBeforeDrawer = document.activeElement;
   activeId = entryId;
   drawerContext = context;
   document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
@@ -308,6 +325,7 @@ async function openDrawer(entryId, context) {
     '<div class="empty">Finding Guardian examples and preparing meanings...</div>';
   document.getElementById("overlay").classList.add("open");
   document.getElementById("drawer").classList.add("open");
+  document.querySelector("#drawer .btn-close").focus();
   try {
     const entry = await api(`/api/entries/${entryId}/detail`);
     known.set(entryId, entry);
@@ -358,6 +376,7 @@ function closeDrawer() {
   document.getElementById("drawer").classList.remove("open");
   document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
   activeId = null;
+  if (focusBeforeDrawer?.isConnected) focusBeforeDrawer.focus();
 }
 
 /** Delete an entry after confirmation and refresh the views that showed it. */
@@ -372,6 +391,10 @@ async function deleteEntry(entryId, context) {
     toast(`"${entry.entry}" deleted.`);
     if (context === "all") await loadAll();
     if (entry.day === todayStr) await loadToday();
+    if (entry.day === selectedDate) {
+      await refreshDates();
+      await selectDate(selectedDate);
+    }
   } catch (error) {
     toast(error.message, true);
   }
@@ -379,6 +402,19 @@ async function deleteEntry(entryId, context) {
 
 function deleteActive() {
   deleteEntry(activeId, drawerContext);
+}
+
+/* ============================================================
+   PDF
+   ============================================================ */
+/** Open the PDF in a new tab, or explain why there is none yet. */
+async function openPdf() {
+  const response = await fetch("/api/pdf");
+  if (response.ok) {
+    window.open("/api/pdf", "_blank");
+  } else {
+    toast((await response.json()).error, true);
+  }
 }
 
 /* ============================================================

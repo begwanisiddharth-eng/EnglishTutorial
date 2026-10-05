@@ -1,0 +1,73 @@
+"""HTTP behaviour: error messages, local-only access and the PDF route."""
+import io
+import urllib.error
+
+import litellm
+import pytest
+from fastapi.testclient import TestClient
+
+import config
+import journal
+import server
+from conftest import TODAY, add_on
+
+LOCAL = "http://127.0.0.1:8000"
+
+
+@pytest.fixture
+def client():
+    return TestClient(server.app, base_url=LOCAL, raise_server_exceptions=False)
+
+
+def test_unknown_entry_returns_readable_error(client):
+    response = client.get("/api/entries/9999/detail")
+    assert response.status_code == 400
+    assert response.json() == {"error": "That entry no longer exists. Reload the page."}
+
+
+def test_accept_round_trip_and_pdf(client):
+    assert client.get("/api/pdf").json()["error"].startswith("No accepted entries")
+    entry_id = add_on(TODAY, "abase")
+    assert client.post(f"/api/entries/{entry_id}/accept", headers={"Origin": LOCAL}).json()["accepted"]
+    assert client.get("/api/pdf").headers["content-type"] == "application/pdf"
+    assert [e["entry"] for e in client.get("/api/accepted").json()] == ["abase"]
+
+
+def test_requests_from_other_sites_are_refused(client):
+    assert client.post("/api/today/more", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert client.get("/api/today", headers={"Host": "evil.example:8000"}).status_code == 403
+    assert client.get("/api/days").status_code == 200
+
+
+def raise_from_detail(monkeypatch, error):
+    def detail(entry_id):
+        raise error
+    monkeypatch.setattr(journal, "detail", detail)
+
+
+@pytest.mark.parametrize("error, message", [
+    (urllib.error.HTTPError("u", 403, "x", {}, io.BytesIO()), "rejected GUARDIAN_API_KEY"),
+    (urllib.error.HTTPError("u", 429, "x", {}, io.BytesIO()), "request limit"),
+    (urllib.error.URLError("down"), "Could not reach The Guardian"),
+    (litellm.AuthenticationError("x", llm_provider="groq", model="m"), "rejected the API key"),
+    (litellm.NotFoundError("x", llm_provider="groq", model="m"), "does not know the model"),
+    (litellm.RateLimitError("x", llm_provider="groq", model="m"), "LLM service failed"),
+])
+def test_service_failures_return_readable_errors(client, monkeypatch, error, message):
+    raise_from_detail(monkeypatch, error)
+    response = client.get("/api/entries/1/detail")
+    assert response.status_code == 502
+    assert message in response.json()["error"]
+
+
+def test_missing_settings_are_named(monkeypatch):
+    monkeypatch.setattr(config, "LLM_MODEL", "")
+    monkeypatch.setattr(config, "GUARDIAN_API_KEY", "")
+    assert config.missing_settings() == ["LLM_MODEL", "GUARDIAN_API_KEY"]
+
+
+def test_missing_provider_key_is_named(monkeypatch):
+    monkeypatch.setattr(config, "LLM_MODEL", "groq/openai/gpt-oss-120b")
+    monkeypatch.setattr(config, "GUARDIAN_API_KEY", "k")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    assert config.missing_settings() == ["GROQ_API_KEY"]

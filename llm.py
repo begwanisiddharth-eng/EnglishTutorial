@@ -1,14 +1,16 @@
 """LLM calls through LiteLLM, retried with tenacity."""
 import json
-import os
-from pathlib import Path
 
-from dotenv import load_dotenv
-from litellm import completion
+from litellm import AuthenticationError, NotFoundError, completion
 from pydantic import BaseModel, Field
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
-load_dotenv(Path(__file__).parent / ".env")
+import config
+
+TIMEOUT_SECONDS = 120
+# Retry transient failures and malformed replies; a rejected key or unknown model will not recover.
+retrying = retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True,
+                 retry=retry_if_not_exception_type((AuthenticationError, NotFoundError)))
 
 CARD_PROMPT = """You are a lexicographer writing for advanced learners of English.
 For each entry below (a word, phrase, idiom, allusion, or foreign expression
@@ -120,9 +122,10 @@ class CardBatch(BaseModel):
 def ask(prompt, schema):
     """Send one prompt and parse the reply into the given Pydantic schema."""
     response = completion(
-        model=os.environ["LLM_MODEL"],
+        model=config.LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         response_format=schema,
+        timeout=TIMEOUT_SECONDS,
     )
     return schema.model_validate_json(response.choices[0].message.content)
 
@@ -140,7 +143,7 @@ def make_card(entry, card):
     return {"entry": entry, **fields}
 
 
-@retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True)
+@retrying
 def card_summaries(entries):
     """Return a card dict (entry, pronunciation, respelling, meaning) for each entry."""
     listing = "\n".join(f"{i}. {entry}" for i, entry in enumerate(entries, 1))
@@ -150,7 +153,7 @@ def card_summaries(entries):
     return [make_card(entry, card) for entry, card in zip(entries, batch.cards)]
 
 
-@retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True)
+@retrying
 def choose_quotes(entry, meaning, candidates):
     """Return up to 3 of the candidate quotes that use the entry well, best first."""
     if not candidates:
@@ -176,7 +179,7 @@ def revision_input(entry):
     return json.dumps(current, ensure_ascii=False, indent=1), quotes
 
 
-@retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True)
+@retrying
 def revise(entry, feedback, max_examples):
     """Apply learner feedback; return the revised card fields and detail."""
     current, quotes = revision_input(entry)
@@ -195,7 +198,7 @@ def revise(entry, feedback, max_examples):
     return card, detail
 
 
-@retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True)
+@retrying
 def entry_detail(entry):
     """Return all senses and example sentences for one entry as a dict."""
     return ask(DETAIL_PROMPT.format(entry=entry), Detail).model_dump()

@@ -14,3 +14,6 @@ wheels/
 
 # Secrets (the file still travels when the folder is copied)
 .env
+
+# Partial PDF builds
+output/*.tmp

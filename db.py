@@ -3,6 +3,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from vocab import fold
+
 DB_PATH = Path(__file__).parent / "data" / "vocab.db"
 
 SCHEMA = """
@@ -63,18 +65,10 @@ def day_entries(day, accepted_only=False):
 
 
 def accepted_entries():
-    """Return all accepted entries alphabetically."""
+    """Return all accepted entries alphabetically, ignoring case and accents."""
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM entries WHERE accepted = 1 ORDER BY entry COLLATE NOCASE")
-        return [to_dict(r) for r in rows]
-
-
-def find_accepted(entry):
-    """Return the accepted entry with this text (case-insensitive), or None."""
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM entries WHERE accepted = 1 AND LOWER(entry) = LOWER(?)",
-                           (entry,)).fetchone()
-        return to_dict(row) if row else None
+        rows = conn.execute("SELECT * FROM entries WHERE accepted = 1")
+        return sorted((to_dict(r) for r in rows), key=lambda e: fold(e["entry"]))
 
 
 def get(entry_id):

@@ -1,12 +1,20 @@
 """The working copy of the vocabulary list: entries not yet accepted."""
 import random
 import shutil
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 BASE_LIST = ROOT / "VOCABBASE.TXT"
 REMAINING = ROOT / "data" / "remaining.txt"
 WORD_COUNT = 3500
+
+
+def fold(entry):
+    """Return entry lowercased with accents removed, for comparison and sorting."""
+    plain = entry.casefold().replace("œ", "oe").replace("æ", "ae")
+    decomposed = unicodedata.normalize("NFKD", plain)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
 def load_remaining():
@@ -29,8 +37,8 @@ def pick(count, exclude):
 
 
 def remove(entry):
-    """Take an accepted entry out of the working list."""
-    save_remaining([e for e in load_remaining() if e != entry])
+    """Take an accepted entry out of the working list, matching case and accents loosely."""
+    save_remaining([e for e in load_remaining() if fold(e) != fold(entry)])
 
 
 def is_phrase(entry):
@@ -42,8 +50,9 @@ def is_phrase(entry):
 
 
 def restore(entry):
-    """Put an entry back into the working list if it belongs to the master list."""
+    """Put the master-list spelling of an entry back into the working list, if it has one."""
     remaining = load_remaining()
     base = BASE_LIST.read_text(encoding="utf-8").splitlines()
-    if entry in base and entry not in remaining:
-        save_remaining(remaining + [entry])
+    missing = [e for e in base if fold(e) == fold(entry) and e not in remaining]
+    if missing:
+        save_remaining(remaining + missing)

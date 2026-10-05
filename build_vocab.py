@@ -5,11 +5,13 @@ Usage:
     uv run build_vocab.py --write  # also write VOCABBASE.TXT if valid
 """
 import sys
-import unicodedata
 from pathlib import Path
 
-PARTS = Path("parts")
-OUTPUT = Path("VOCABBASE.TXT")
+from vocab import fold
+
+ROOT = Path(__file__).parent
+PARTS = ROOT / "parts"
+OUTPUT = ROOT / "VOCABBASE.TXT"
 WORD_TARGET = 3500
 PHRASE_TARGET = 1500
 SUFFIXES = ("ly", "ness", "ity", "ion", "ation", "ment", "ous", "ance",
@@ -23,13 +25,6 @@ def load(pattern):
         lines = path.read_text(encoding="utf-8").splitlines()
         entries += [line.strip() for line in lines if line.strip()]
     return entries
-
-
-def fold(entry):
-    """Return entry lowercased with accents removed, for comparison."""
-    plain = entry.casefold().replace("œ", "oe").replace("æ", "ae")
-    decomposed = unicodedata.normalize("NFKD", plain)
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
 def duplicates(entries):

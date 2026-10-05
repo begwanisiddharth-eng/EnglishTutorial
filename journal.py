@@ -41,13 +41,18 @@ def day_entries(day):
     return db.day_entries(day, accepted_only=True)
 
 
+def refuse_if_accepted(text):
+    """Refuse if an accepted entry matches text, ignoring case and accents."""
+    if vocab.fold(text) in {vocab.fold(e["entry"]) for e in db.accepted_entries()}:
+        raise Refused(f'"{text}" is already in your collection.')
+
+
 def add_typed(text):
     """Add an entry the user typed to today's page."""
     text = text.strip()
-    if text.lower() in {e["entry"].lower() for e in db.day_entries(today())}:
+    if vocab.fold(text) in {vocab.fold(e["entry"]) for e in db.day_entries(today())}:
         raise Refused(f'"{text}" is already on today\'s page.')
-    if db.find_accepted(text):
-        raise Refused(f'"{text}" is already in your collection.')
+    refuse_if_accepted(text)
     db.insert_cards(today(), llm.card_summaries([text]))
 
 
@@ -67,9 +72,17 @@ def build_detail(entry):
     return detail
 
 
+def existing(entry_id):
+    """Return the entry, refusing if it has been deleted (e.g. from another tab)."""
+    entry = db.get(entry_id)
+    if entry is None:
+        raise Refused("That entry no longer exists. Reload the page.")
+    return entry
+
+
 def detail(entry_id):
     """Return an entry's detail, generating it on first request."""
-    entry = db.get(entry_id)
+    entry = existing(entry_id)
     if entry["detail"] is None:
         db.set_detail(entry_id, build_detail(entry))
     return db.get(entry_id)
@@ -87,7 +100,7 @@ def editable(entry):
 
 def revise(entry_id, feedback):
     """Revise an entry's content according to the learner's feedback."""
-    entry = db.get(entry_id)
+    entry = existing(entry_id)
     editable(entry)
     if not feedback.strip():
         raise Refused("Write what should change first.")
@@ -97,22 +110,38 @@ def revise(entry_id, feedback):
     return db.get(entry_id)
 
 
+def publish_pdf(entries):
+    """Rebuild the PDF from these accepted entries, refusing if a PDF viewer has it locked."""
+    try:
+        pdf.build(entries)
+    except PermissionError:
+        raise Refused("vocabulary.pdf is open in another program. Close it and try again.")
+
+
 def accept(entry_id):
-    """Accept an entry: it is final, and leaves the working vocabulary list."""
-    entry = db.get(entry_id)
+    """Accept an entry: it is final, and leaves the working vocabulary list.
+
+    The PDF is updated first, so a failure leaves nothing changed.
+    """
+    entry = existing(entry_id)
     editable(entry)
+    refuse_if_accepted(entry["entry"])
+    publish_pdf(db.accepted_entries() + [{**entry, "accepted": True}])
     db.set_accepted(entry_id)
     vocab.remove(entry["entry"])
-    pdf.build(db.accepted_entries())
     return db.get(entry_id)
 
 
 def delete(entry_id):
-    """Delete today's entry or any accepted entry; accepted ones return to the working list."""
-    entry = db.get(entry_id)
+    """Delete today's entry or any accepted entry; accepted ones return to the working list.
+
+    For an accepted entry the PDF is updated first, so a failure leaves nothing changed.
+    """
+    entry = existing(entry_id)
     if entry["day"] != today() and not entry["accepted"]:
         raise Refused("Past days are read-only.")
+    if entry["accepted"]:
+        publish_pdf([e for e in db.accepted_entries() if e["id"] != entry_id])
     db.delete(entry_id)
     if entry["accepted"]:
         vocab.restore(entry["entry"])
-        pdf.build(db.accepted_entries())

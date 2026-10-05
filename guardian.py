@@ -1,12 +1,13 @@
 """Real example sentences from The Guardian Open Platform API."""
 import json
-import os
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
+import config
 
 SEARCH_URL = "https://content.guardianapis.com/search"
 ARTICLES = 30
@@ -44,6 +45,13 @@ def inflectable(word):
     return re.escape(stem).replace("'", APOSTROPHE) + r"\w{0,4}"
 
 
+def transient(error):
+    """Return True for failures worth retrying: network errors, rate limits and server errors."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or error.code >= 500
+    return isinstance(error, urllib.error.URLError)
+
+
 def literal(word):
     """Return a regex matching a word exactly, allowing either apostrophe style."""
     return PLACEHOLDERS.get(word.lower(), re.escape(word).replace("'", APOSTROPHE))
@@ -51,8 +59,9 @@ def literal(word):
 
 def entry_pattern(entry):
     """Return a case-insensitive regex that finds the entry in running text."""
-    words = core_words(entry)
-    parts = [inflectable(words[0])] + [literal(w) for w in words[1:]]
+    first, *rest = core_words(entry)
+    head = literal(first) if first.lower() in PLACEHOLDERS else inflectable(first)
+    parts = [head] + [literal(w) for w in rest]
     return re.compile(r"\b" + r"\s+".join(parts) + r"\b", re.IGNORECASE)
 
 
@@ -70,12 +79,12 @@ def search_query(entry):
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20), reraise=True,
-       retry=retry_if_exception_type(urllib.error.URLError))
+       retry=retry_if_exception(transient))
 def search(query):
     """Return Guardian articles (title, url, date, body text) matching the query."""
     query = urllib.parse.urlencode({
         "q": query, "show-fields": "bodyText", "page-size": ARTICLES,
-        "api-key": os.environ["GUARDIAN_API_KEY"],
+        "api-key": config.GUARDIAN_API_KEY,
     })
     with urllib.request.urlopen(f"{SEARCH_URL}?{query}", timeout=30) as response:
         results = json.load(response)["response"]["results"]

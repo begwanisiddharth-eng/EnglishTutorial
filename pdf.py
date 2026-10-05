@@ -14,11 +14,11 @@ from reportlab.platypus import BaseDocTemplate, Frame, PageBreak, PageTemplate, 
 from reportlab.platypus.tableofcontents import TableOfContents
 
 import vocab
-from build_vocab import fold
 
 ROOT = Path(__file__).parent
 FONTS = ROOT / "fonts"
 PDF_PATH = ROOT / "output" / "vocabulary.pdf"
+TEMP_PATH = PDF_PATH.with_suffix(".tmp")
 MARGIN = 2.2 * cm
 BLUE = colors.HexColor("#1e40af")
 VIOLET = colors.HexColor("#7c3aed")
@@ -128,7 +128,7 @@ def section_story(title, entries):
     if not entries:
         return []
     story = [PageBreak(), para(title, "section")]
-    for entry in sorted(entries, key=lambda e: fold(e["entry"])):
+    for entry in sorted(entries, key=lambda e: vocab.fold(e["entry"])):
         story += entry_story(entry)
     return story
 
@@ -145,7 +145,10 @@ def front_matter(count):
 
 
 def build(entries):
-    """Rebuild the PDF from all accepted entries, or remove it when there are none."""
+    """Rebuild the PDF from all accepted entries, or remove it when there are none.
+
+    The new PDF is written to a temporary file and swapped in only once complete.
+    """
     if not entries:
         PDF_PATH.unlink(missing_ok=True)
         return
@@ -153,4 +156,5 @@ def build(entries):
     words = [e for e in entries if not vocab.is_phrase(e["entry"])]
     phrases = [e for e in entries if vocab.is_phrase(e["entry"])]
     story = front_matter(len(entries)) + section_story("Words", words) + section_story("Phrases", phrases)
-    JournalDoc(PDF_PATH).multiBuild(story)
+    JournalDoc(TEMP_PATH).multiBuild(story)
+    TEMP_PATH.replace(PDF_PATH)
