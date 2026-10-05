@@ -5,7 +5,6 @@ import urllib.error
 import webbrowser
 from pathlib import Path
 
-import litellm
 import openai
 import uvicorn
 from fastapi import FastAPI, Request
@@ -82,21 +81,14 @@ def guardian_unreachable(request: Request, exc: urllib.error.URLError):
     return error(502, "Could not reach The Guardian. Check the internet connection.")
 
 
-@app.exception_handler(litellm.AuthenticationError)
-def llm_key_rejected(request: Request, exc: litellm.AuthenticationError):
-    """Explain a rejected LLM API key."""
-    return error(502, "The LLM provider rejected the API key in .env.")
-
-
-@app.exception_handler(litellm.NotFoundError)
-def llm_model_unknown(request: Request, exc: litellm.NotFoundError):
-    """Explain an unknown LLM model name."""
-    return error(502, f"The LLM provider does not know the model {config.LLM_MODEL}. Check LLM_MODEL in .env.")
-
-
 @app.exception_handler(openai.APIError)
 def llm_failed(request: Request, exc: openai.APIError):
-    """Explain an LLM failure that persisted through retries (all litellm errors derive from openai.APIError)."""
+    """Explain an LLM failure (all litellm errors derive from openai.APIError), judged by its HTTP status."""
+    status = getattr(exc, "status_code", None)
+    if status in (401, 403):
+        return error(502, "The LLM provider rejected the API key in .env.")
+    if status == 404:
+        return error(502, f"The LLM provider does not know the model {config.LLM_MODEL}. Check LLM_MODEL in .env.")
     return error(502, "The LLM service failed. Try again in a minute.")
 
 

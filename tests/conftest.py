@@ -10,8 +10,8 @@ import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+import litellm
 import pytest
-from tenacity import wait_none
 
 import db
 import guardian
@@ -77,7 +77,7 @@ def app_state(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "completion", fake_completion)
     monkeypatch.setattr(guardian, "search", fake_search)
     for fn in (llm.card_summaries, llm.choose_quotes, llm.entry_detail, llm.revise, REAL_SEARCH):
-        monkeypatch.setattr(fn.retry, "wait", wait_none())
+        monkeypatch.setattr(fn.retry, "sleep", lambda seconds: None)
     return tmp_path
 
 
@@ -87,6 +87,13 @@ def add_on(day, text):
     entry_id = db.day_entries(day)[-1]["id"]
     journal.detail(entry_id)
     return entry_id
+
+
+def groq_invalid_key():
+    """Return the error litellm raises for Groq's "Invalid API Key": a BadRequestError with status 401."""
+    error = litellm.BadRequestError("Invalid API Key", model="m", llm_provider="groq")
+    error.status_code = 401
+    return error
 
 
 @contextmanager

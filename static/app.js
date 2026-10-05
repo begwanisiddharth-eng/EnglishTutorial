@@ -169,7 +169,7 @@ async function loadToday() {
 function addEntry() {
   const input = document.getElementById("add-input");
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || document.getElementById("add-btn").disabled) return;
   withSpinner("add-btn", async () => {
     const entries = await api("/api/today/add", "POST", { entry: text });
     input.value = "";
@@ -180,9 +180,11 @@ function addEntry() {
 
 function generateMore() {
   withSpinner("more-btn", async () => {
+    const before = document.querySelectorAll("#today-cards .card").length;
     const entries = await api("/api/today/more", "POST");
     renderCards(entries, "today-cards", "today", "No entries today.");
-    toast("5 more words added.");
+    const added = entries.length - before;
+    toast(`${added} more ${added === 1 ? "entry" : "entries"} added.`);
   });
 }
 
@@ -312,6 +314,13 @@ function refreshCard(entry) {
   document.getElementById("card-" + entry.id).classList.add("active");
 }
 
+/** While the drawer is open only it can be reached; while closed it cannot be reached at all. */
+function setModal(open) {
+  document.getElementById("drawer").inert = !open;
+  document.querySelector("nav").inert = open;
+  document.querySelector("main").inert = open;
+}
+
 async function openDrawer(entryId, context) {
   if (activeId === null) focusBeforeDrawer = document.activeElement;
   activeId = entryId;
@@ -325,6 +334,7 @@ async function openDrawer(entryId, context) {
     '<div class="empty">Finding Guardian examples and preparing meanings...</div>';
   document.getElementById("overlay").classList.add("open");
   document.getElementById("drawer").classList.add("open");
+  setModal(true);
   document.querySelector("#drawer .btn-close").focus();
   try {
     const entry = await api(`/api/entries/${entryId}/detail`);
@@ -374,6 +384,7 @@ async function acceptActive() {
 function closeDrawer() {
   document.getElementById("overlay").classList.remove("open");
   document.getElementById("drawer").classList.remove("open");
+  setModal(false);
   document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
   const redrawnCard = document.querySelector(`#card-${activeId} .card-open`);
   activeId = null;

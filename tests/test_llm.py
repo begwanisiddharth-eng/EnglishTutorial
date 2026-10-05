@@ -3,8 +3,10 @@ from types import SimpleNamespace
 
 import litellm
 import pytest
+import tenacity
 
 import llm
+from conftest import groq_invalid_key
 
 
 def reply(json_text):
@@ -44,6 +46,7 @@ def test_choose_quotes_retries_out_of_range_numbers(monkeypatch):
 @pytest.mark.parametrize("error", [
     litellm.AuthenticationError("bad key", llm_provider="groq", model="m"),
     litellm.NotFoundError("no model", llm_provider="groq", model="m"),
+    groq_invalid_key(),
 ])
 def test_permanent_errors_are_not_retried(monkeypatch, error):
     calls = stub_completion(monkeypatch, [error] * 4)
@@ -59,9 +62,49 @@ def test_keyboard_interrupt_is_not_retried(monkeypatch):
     assert len(calls) == 1
 
 
-def test_rate_limit_is_retried(monkeypatch):
-    error = litellm.RateLimitError("slow down", llm_provider="groq", model="m")
-    calls = stub_completion(monkeypatch, [error] * 4)
+DETAIL_REPLY = ('{"senses": [{"part_of_speech": "verb", "definition": "d"}], "examples": ["e"],'
+                ' "synonyms": [], "antonyms": []}')
+
+
+class FakeClock:
+    """A clock that tenacity reads and that its sleeps advance, so retry timing runs instantly."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def rate_limited_for(monkeypatch, seconds):
+    """Make completion() fail with a rate limit until the fake clock passes seconds; return the calls."""
+    clock = FakeClock()
+    monkeypatch.setattr(tenacity, "time", clock)
+    monkeypatch.setattr(llm.entry_detail.retry, "sleep", clock.sleep)
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(clock.now)
+        if clock.now < seconds:
+            raise litellm.RateLimitError("tokens per minute", llm_provider="groq", model="m")
+        return reply(DETAIL_REPLY)
+
+    monkeypatch.setattr(llm, "completion", completion)
+    return calls
+
+
+def test_rate_limit_lasting_a_minute_is_waited_out(monkeypatch):
+    calls = rate_limited_for(monkeypatch, 60)
+    assert llm.entry_detail("abate")["examples"] == ["e"]
+    assert calls[-1] >= 60
+
+
+def test_endless_rate_limit_gives_up_within_budget(monkeypatch):
+    calls = rate_limited_for(monkeypatch, float("inf"))
     with pytest.raises(litellm.RateLimitError):
         llm.entry_detail("abate")
-    assert len(calls) == 4
+    assert len(calls) <= llm.MAX_ATTEMPTS
+    assert calls[-1] <= llm.RETRY_SECONDS

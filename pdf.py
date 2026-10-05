@@ -65,7 +65,7 @@ def page_footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Sans", 8)
     canvas.setFillColor(MUTED)
-    canvas.drawCentredString(A4[0] / 2, MARGIN * 0.5, f"Word Hoard  ·  Page {doc.page}")
+    canvas.drawCentredString(A4[0] / 2, MARGIN * 0.5, f"Word Bank  ·  Page {doc.page}")
     canvas.restoreState()
 
 
@@ -73,7 +73,7 @@ class JournalDoc(BaseDocTemplate):
     """Document template that turns section and entry headings into contents entries."""
 
     def __init__(self, path):
-        super().__init__(str(path), pagesize=A4, title="Word Hoard", leftMargin=MARGIN,
+        super().__init__(str(path), pagesize=A4, title="Word Bank", leftMargin=MARGIN,
                          rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN)
         frame = Frame(MARGIN, MARGIN, A4[0] - 2 * MARGIN, A4[1] - 2 * MARGIN, id="main")
         self.addPageTemplates([PageTemplate(id="main", frames=frame, onPage=page_footer)])
@@ -147,7 +147,7 @@ def front_matter(count):
     contents = TableOfContents()
     contents.levelStyles = [STYLES["toc0"], STYLES["toc1"]]
     updated = date.today().strftime("%d %B %Y")
-    return [Spacer(1, 6 * cm), para("Word Hoard", "title"),
+    return [Spacer(1, 6 * cm), para("Word Bank", "title"),
             para("Accepted words and phrases for advanced learners of English", "subtitle"),
             para(f"{count} {'entry' if count == 1 else 'entries'}  ·  updated {updated}", "subtitle"),
             PageBreak(), para("Contents", "contents"), contents]

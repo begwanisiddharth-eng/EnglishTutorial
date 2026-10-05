@@ -2,7 +2,6 @@
 import json
 import sqlite3
 from contextlib import closing, contextmanager
-from functools import cache
 from pathlib import Path
 
 from vocab import fold
@@ -22,19 +21,16 @@ CREATE TABLE IF NOT EXISTS entries (
 """
 
 
-@cache
-def create_schema(path):
-    """Create the tables once per database file."""
-    path.parent.mkdir(exist_ok=True)
-    with closing(sqlite3.connect(path)) as conn:
-        conn.executescript(SCHEMA)
-
-
 @contextmanager
 def connect():
-    """Yield a connection for one transaction, committed on success and then closed."""
-    create_schema(DB_PATH)
+    """Yield a connection for one transaction, committed on success and then closed.
+
+    The tables are created if missing on every connection (about 0.1 ms), so a deleted
+    database file is recreated rather than failing until restart.
+    """
+    DB_PATH.parent.mkdir(exist_ok=True)
     with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.executescript(SCHEMA)
         conn.row_factory = sqlite3.Row
         with conn:
             yield conn

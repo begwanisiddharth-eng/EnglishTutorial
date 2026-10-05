@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Word Hoard</title>
+  <title>Word Bank</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <nav>
-  <div class="nav-brand">Word<span>&middot;</span>Hoard</div>
+  <div class="nav-brand">Word<span>&middot;</span>Bank</div>
   <div class="nav-links">
     <button class="nav-btn active" id="nav-today" onclick="showView('today')">Today</button>
     <button class="nav-btn" id="nav-browse" onclick="showView('browse')">Browse</button>
@@ -73,7 +73,7 @@
 </main>
 
 <div class="drawer-overlay" id="overlay" onclick="closeDrawer()"></div>
-<aside class="drawer" id="drawer">
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-word" inert>
   <div class="drawer-header">
     <div>
       <div class="drawer-word" id="d-word"></div>

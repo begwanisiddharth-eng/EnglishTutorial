@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 import config
 import journal
 import server
-from conftest import TODAY, add_on
+from conftest import TODAY, add_on, groq_invalid_key
 
 LOCAL = "http://127.0.0.1:8000"
 
@@ -63,6 +63,7 @@ def raise_from_detail(monkeypatch, error):
     (urllib.error.URLError("down"), "Could not reach The Guardian"),
     (litellm.AuthenticationError("x", llm_provider="groq", model="m"), "rejected the API key"),
     (litellm.NotFoundError("x", llm_provider="groq", model="m"), "does not know the model"),
+    (groq_invalid_key(), "rejected the API key"),
     (litellm.RateLimitError("x", llm_provider="groq", model="m"), "LLM service failed"),
 ])
 def test_service_failures_return_readable_errors(client, monkeypatch, error, message):

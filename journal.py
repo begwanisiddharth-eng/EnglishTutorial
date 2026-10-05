@@ -12,6 +12,10 @@ DAILY_COUNT = 5
 MAX_EXAMPLES = 5
 # Serialises additions to a day's page, so overlapping requests cannot both make the daily pick.
 PAGE_LOCK = threading.Lock()
+# Serialises accept and delete, which read the collection, rebuild the PDF and then write.
+COLLECTION_LOCK = threading.Lock()
+# One lock per entry, so concurrent opens of the same entry generate its detail only once.
+DETAIL_LOCKS = {}
 
 
 class Refused(Exception):
@@ -29,14 +33,18 @@ def shown_on(day):
 
 
 def pick_into(day, count):
-    """Pick entries from the working list that are not yet on the day's page, and add them."""
-    db.insert_cards(day, llm.card_summaries(vocab.pick(count, shown_on(day))))
+    """Add up to count entries from the working list that are not yet on the day's page; return how many."""
+    picked = vocab.pick(count, shown_on(day))
+    if picked:
+        db.insert_cards(day, llm.card_summaries(picked))
+    return len(picked)
 
 
 def add_random(count):
-    """Add count random entries to today's page."""
+    """Add up to count random entries to today's page, refusing when none are left."""
     with PAGE_LOCK:
-        pick_into(today(), count)
+        if not pick_into(today(), count):
+            raise Refused("Every entry in the vocabulary list is already on today's page or accepted.")
 
 
 def todays_entries():
@@ -100,11 +108,12 @@ def existing(entry_id):
 
 
 def detail(entry_id):
-    """Return an entry's detail, generating it on first request."""
-    entry = existing(entry_id)
-    if entry["detail"] is None:
-        db.set_detail(entry_id, build_detail(entry))
-    return db.get(entry_id)
+    """Return an entry's detail, generating it on first request; concurrent requests wait for it."""
+    with DETAIL_LOCKS.setdefault(entry_id, threading.Lock()):
+        entry = existing(entry_id)
+        if entry["detail"] is None:
+            db.set_detail(entry_id, build_detail(entry))
+    return existing(entry_id)  # the stored row, exactly as later requests will see it
 
 
 def editable(entry):
@@ -142,12 +151,13 @@ def accept(entry_id):
 
     The PDF is updated first, so a failure leaves nothing changed.
     """
-    entry = existing(entry_id)
-    editable(entry)
-    refuse_if_accepted(entry["entry"])
-    publish_pdf(db.accepted_entries() + [{**entry, "accepted": True}])
-    db.set_accepted(entry_id)
-    vocab.remove(entry["entry"])
+    with COLLECTION_LOCK:
+        entry = existing(entry_id)
+        editable(entry)
+        refuse_if_accepted(entry["entry"])
+        publish_pdf(db.accepted_entries() + [{**entry, "accepted": True}])
+        db.set_accepted(entry_id)
+        vocab.remove(entry["entry"])
     return db.get(entry_id)
 
 
@@ -156,11 +166,12 @@ def delete(entry_id):
 
     For an accepted entry the PDF is updated first, so a failure leaves nothing changed.
     """
-    entry = existing(entry_id)
-    if entry["day"] != today() and not entry["accepted"]:
-        raise Refused("Past days are read-only.")
-    if entry["accepted"]:
-        publish_pdf([e for e in db.accepted_entries() if e["id"] != entry_id])
-    db.delete(entry_id)
-    if entry["accepted"]:
-        vocab.restore(entry["entry"])
+    with COLLECTION_LOCK:
+        entry = existing(entry_id)
+        if entry["day"] != today() and not entry["accepted"]:
+            raise Refused("Past days are read-only.")
+        if entry["accepted"]:
+            publish_pdf([e for e in db.accepted_entries() if e["id"] != entry_id])
+        db.delete(entry_id)
+        if entry["accepted"]:
+            vocab.restore(entry["entry"])

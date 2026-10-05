@@ -59,3 +59,16 @@ def test_search_retries_only_transient_failures(monkeypatch, error, attempts):
     with pytest.raises(type(error)):
         REAL_SEARCH('"abate"')
     assert len(calls) == attempts
+
+
+def test_sentences_split_before_a_number():
+    article = {"title": "T", "url": "u", "date": "2025-01-02",
+               "text": "The storm did not abate in the valley until 1984. 2001 was another year when the winds would not abate."}
+    assert [c["text"] for c in guardian.candidates("abate", [article])] == [
+        "The storm did not abate in the valley until 1984.", "2001 was another year when the winds would not abate."]
+
+
+def test_bullet_separated_footers_are_not_joined_to_quotes():
+    article = {"title": "T", "url": "u", "date": "2025-01-02",
+               "text": "Mum's the word! • Anthony Watt writes a regular blog for us on his experiences of adoption."}
+    assert guardian.candidates("mum's the word", [article]) == []

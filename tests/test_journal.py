@@ -194,3 +194,56 @@ def test_deleted_typed_entry_can_be_looked_up_again():
     assert "zugzwang" not in vocab.load_remaining()
     journal.add_typed("zugzwang")
     assert db.day_entries(TODAY)[-1]["entry"] == "zugzwang"
+
+
+def run_together(*actions):
+    """Run the actions in parallel threads; return the exceptions they raised."""
+    errors = []
+
+    def run(action):
+        try:
+            action()
+        except Exception as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=run, args=(action,)) for action in actions]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return errors
+
+
+def test_concurrent_accepts_both_reach_the_pdf(monkeypatch):
+    first, second = add_on(TODAY, "abase"), add_on(TODAY, "abash")
+    build = pdf.JournalDoc.multiBuild
+    monkeypatch.setattr(pdf.JournalDoc, "multiBuild", lambda self, story: (time.sleep(0.3), build(self, story)))
+    assert run_together(lambda: journal.accept(first), lambda: journal.accept(second)) == []
+    data = pdf.PDF_PATH.read_bytes()
+    assert accepted_texts() == ["abase", "abash"]
+    assert b"(abase)" in data and b"(abash)" in data
+
+
+def test_concurrent_opens_generate_detail_once(monkeypatch):
+    db.insert_cards(TODAY, [{"entry": "abate", "pronunciation": "", "respelling": "", "meaning": "m"}])
+    entry_id = db.day_entries(TODAY)[0]["id"]
+    detail_calls = []
+    fake = llm.completion
+
+    def counting(**kwargs):
+        if kwargs["response_format"] is llm.Detail:
+            detail_calls.append(1)
+            time.sleep(0.2)
+        return fake(**kwargs)
+
+    monkeypatch.setattr(llm, "completion", counting)
+    assert run_together(*[lambda: journal.detail(entry_id)] * 3) == []
+    assert len(detail_calls) == 1
+
+
+def test_more_with_nothing_left_is_refused_without_an_llm_call(monkeypatch):
+    vocab.save_remaining([])
+    monkeypatch.setattr(llm, "completion", lambda **kwargs: pytest.fail("LLM called with nothing to pick"))
+    with pytest.raises(journal.Refused, match="Every entry"):
+        journal.add_random(journal.DAILY_COUNT)
+    assert journal.todays_entries() == []

@@ -1,18 +1,29 @@
 """LLM calls through LiteLLM, retried with tenacity."""
 import json
 
-from litellm import AuthenticationError, NotFoundError, completion
+from litellm import completion
 from pydantic import BaseModel, Field
-from tenacity import (retry, retry_if_exception_type, retry_if_not_exception_type, stop_after_attempt,
-                      wait_exponential)
+from tenacity import retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_exponential
 
 import config
 
 TIMEOUT_SECONDS = 120
-# Retry transient failures and malformed replies; a rejected key or unknown model will not recover.
-retrying = retry(stop=stop_after_attempt(4), wait=wait_exponential(min=2, max=30), reraise=True,
-                 retry=retry_if_exception_type(Exception)
-                 & retry_if_not_exception_type((AuthenticationError, NotFoundError)))
+# Groq's free tier limits tokens per minute; a rate-limited attempt is refused at once and costs
+# nothing, so keep retrying for longer than the one-minute window.
+RETRY_SECONDS = 90
+MAX_ATTEMPTS = 8
+# A rejected key (401, 403) or unknown model (404) will not recover. Judged by status, not exception
+# type: litellm reports Groq's "Invalid API Key" as a BadRequestError with status 401.
+PERMANENT_STATUS = {401, 403, 404}
+
+
+def worth_retrying(error):
+    """Return True for transient failures and malformed replies; False for permanent errors and interrupts."""
+    return isinstance(error, Exception) and getattr(error, "status_code", None) not in PERMANENT_STATUS
+
+
+retrying = retry(stop=stop_after_attempt(MAX_ATTEMPTS) | stop_after_delay(RETRY_SECONDS),
+                 wait=wait_exponential(min=2, max=20), reraise=True, retry=retry_if_exception(worth_retrying))
 
 CARD_PROMPT = """You are a lexicographer writing for advanced learners of English.
 For each entry below (a word, phrase, idiom, allusion, or foreign expression

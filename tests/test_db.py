@@ -27,3 +27,9 @@ def test_entries_round_trip_with_card_fields_flattened():
     entry = db.day_entries(TODAY)[0]
     assert (entry["entry"], entry["meaning"], entry["detail"], entry["accepted"]) == \
         ("Œuvre", "meaning of Œuvre", None, False)
+
+
+def test_deleted_database_is_recreated():
+    db.start_day(TODAY)
+    db.DB_PATH.unlink()
+    assert not db.day_started(TODAY)
