@@ -157,7 +157,6 @@ amulet
 anachronism
 analgesic
 analogous
-anaphora
 anarchy
 anathema
 anchorite
@@ -1799,7 +1798,6 @@ incognito
 incoherent
 incommunicado
 incongruous
-inconsequential
 incontrovertible
 incorrigible
 incredulous

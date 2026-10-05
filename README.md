@@ -63,7 +63,6 @@ Anyone you give the folder to can use your API keys.
 | Path | Purpose |
 |---|---|
 | `server.py` | Web server and API routes |
-| `config.py` | Settings from `.env`, checked at startup |
 | `journal.py` | Rules for today, past days, revising, accepting and deleting |
 | `db.py` | SQLite storage (`data/vocab.db`) |
 | `vocab.py` | Working copy of the vocabulary list (`data/remaining.txt`) |
@@ -74,11 +73,9 @@ Anyone you give the folder to can use your API keys.
 | `VOCABBASE.TXT` | Master list of 5,000 entries (never modified) |
 | `parts/`, `build_vocab.py` | Sources for rebuilding `VOCABBASE.TXT` |
 | `fonts/` | DejaVu fonts for IPA in the PDF (free licence in `fonts/LICENSE`) |
-| `tests/` | Tests: `uv run pytest` (no API calls, real data untouched) |
 
 ## Known limitations
 
 - Pronunciations come from the LLM and are sometimes wrong. Correct them with Edit.
 - Rare entries may have fewer than three usable Guardian quotes. Written examples fill the gaps.
-- Accept and Delete are refused while `vocabulary.pdf` is open in a viewer that locks it (e.g. Acrobat). Close it and try again.
 - The audio button uses the browser's built-in voice, which reads foreign phrases as if they were English.
