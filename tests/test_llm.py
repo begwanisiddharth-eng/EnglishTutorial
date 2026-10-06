@@ -3,10 +3,9 @@ from types import SimpleNamespace
 
 import litellm
 import pytest
-import tenacity
 
 import llm
-from conftest import groq_daily_limit, groq_invalid_key
+from conftest import FALLBACK, PRIMARY, groq_daily_limit, groq_invalid_key
 
 
 def reply(json_text):
@@ -28,12 +27,35 @@ def stub_completion(monkeypatch, outcomes):
     return calls
 
 
-def test_detail_is_parsed_and_sent_with_timeout(monkeypatch):
-    calls = stub_completion(monkeypatch, [
-        '{"senses": [{"part_of_speech": "verb", "definition": "d"}], "examples": ["e"],'
-        ' "synonyms": [], "antonyms": []}'])
+DETAIL_REPLY = ('{"senses": [{"part_of_speech": "verb", "definition": "d"}], "examples": ["e"],'
+                ' "synonyms": [], "antonyms": []}')
+
+
+def test_primary_answers_without_touching_the_fallback(monkeypatch):
+    calls = stub_completion(monkeypatch, [DETAIL_REPLY])
     assert llm.entry_detail("abate")["senses"][0]["definition"] == "d"
-    assert calls[0]["timeout"] == llm.TIMEOUT_SECONDS
+    assert [(c["model"], c["timeout"], c["max_retries"]) for c in calls] == [
+        (PRIMARY, llm.PRIMARY_TIMEOUT_SECONDS, 0)]
+
+
+@pytest.mark.parametrize("failure", [
+    litellm.RateLimitError("tokens per minute (TPM)", llm_provider="groq", model="m"),
+    groq_daily_limit(),
+    litellm.ServiceUnavailableError("over capacity", llm_provider="groq", model="m"),
+    litellm.Timeout("timed out", llm_provider="groq", model="m"),
+    litellm.APIConnectionError("no route", llm_provider="groq", model="m"),
+    litellm.BadRequestError("json_validate_failed", llm_provider="groq", model="m"),
+    "not json",
+])
+def test_primary_failure_switches_to_fallback_at_once(monkeypatch, caplog, failure):
+    sleeps = []
+    monkeypatch.setattr(llm.entry_detail.retry, "sleep", sleeps.append)
+    calls = stub_completion(monkeypatch, [failure, DETAIL_REPLY])
+    assert llm.entry_detail("abate")["examples"] == ["e"]
+    assert [(c["model"], c["timeout"]) for c in calls] == [
+        (PRIMARY, llm.PRIMARY_TIMEOUT_SECONDS), (FALLBACK, llm.FALLBACK_TIMEOUT_SECONDS)]
+    assert sleeps == []
+    assert f"using {FALLBACK}" in caplog.text
 
 
 def test_choose_quotes_retries_out_of_range_numbers(monkeypatch):
@@ -77,17 +99,31 @@ def test_revise_drops_only_the_quotes_named(monkeypatch):
     assert [e["text"] for e in detail["examples"]] == ["quote 1", "quote 3", "w"]
 
 
+def test_primary_reply_with_wrong_content_switches_to_fallback(monkeypatch):
+    card = '{"pronunciation": "/x/", "respelling": "X", "meaning": "m"}'
+    calls = stub_completion(monkeypatch, [f'{{"cards": [{card}]}}', f'{{"cards": [{card}, {card}]}}'])
+    assert len(llm.card_summaries(["abate", "abase"])) == 2
+    assert [c["model"] for c in calls] == [PRIMARY, FALLBACK]
+
+
 @pytest.mark.parametrize("error", [
     litellm.AuthenticationError("bad key", llm_provider="groq", model="m"),
     litellm.NotFoundError("no model", llm_provider="groq", model="m"),
     groq_invalid_key(),
-    groq_daily_limit(),
 ])
-def test_permanent_errors_are_not_retried(monkeypatch, error):
+def test_configuration_errors_are_reported_not_hidden_by_the_fallback(monkeypatch, error):
     calls = stub_completion(monkeypatch, [error] * 4)
     with pytest.raises(type(error)):
         llm.entry_detail("abate")
     assert len(calls) == 1
+
+
+def test_fallback_configuration_error_is_reported_at_once(monkeypatch):
+    bad_key = litellm.AuthenticationError("bad key", llm_provider="openai", model="m")
+    calls = stub_completion(monkeypatch, [litellm.RateLimitError("tpm", llm_provider="groq", model="m"), bad_key])
+    with pytest.raises(litellm.AuthenticationError):
+        llm.entry_detail("abate")
+    assert [c["model"] for c in calls] == [PRIMARY, FALLBACK]
 
 
 def test_keyboard_interrupt_is_not_retried(monkeypatch):
@@ -97,49 +133,12 @@ def test_keyboard_interrupt_is_not_retried(monkeypatch):
     assert len(calls) == 1
 
 
-DETAIL_REPLY = ('{"senses": [{"part_of_speech": "verb", "definition": "d"}], "examples": ["e"],'
-                ' "synonyms": [], "antonyms": []}')
-
-
-class FakeClock:
-    """A clock that tenacity reads and that its sleeps advance, so retry timing runs instantly."""
-
-    def __init__(self):
-        self.now = 0.0
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.now += seconds
-
-
-def rate_limited_for(monkeypatch, seconds):
-    """Make completion() fail with a rate limit until the fake clock passes seconds; return the calls."""
-    clock = FakeClock()
-    monkeypatch.setattr(tenacity, "time", clock)
-    monkeypatch.setattr(llm.entry_detail.retry, "sleep", clock.sleep)
-    calls = []
-
-    def completion(**kwargs):
-        calls.append(clock.now)
-        if clock.now < seconds:
-            raise litellm.RateLimitError("tokens per minute", llm_provider="groq", model="m")
-        return reply(DETAIL_REPLY)
-
-    monkeypatch.setattr(llm, "completion", completion)
-    return calls
-
-
-def test_rate_limit_lasting_a_minute_is_waited_out(monkeypatch):
-    calls = rate_limited_for(monkeypatch, 60)
-    assert llm.entry_detail("abate")["examples"] == ["e"]
-    assert calls[-1] >= 60
-
-
-def test_endless_rate_limit_gives_up_within_budget(monkeypatch):
-    calls = rate_limited_for(monkeypatch, float("inf"))
+def test_both_failing_gives_up_after_a_bounded_number_of_tries(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(llm.entry_detail.retry, "sleep", sleeps.append)
+    busy = litellm.RateLimitError("tpm", llm_provider="groq", model="m")
+    calls = stub_completion(monkeypatch, [busy] * (2 * llm.MAX_ATTEMPTS))
     with pytest.raises(litellm.RateLimitError):
         llm.entry_detail("abate")
-    assert len(calls) <= llm.MAX_ATTEMPTS
-    assert calls[-1] <= llm.RETRY_SECONDS
+    assert [c["model"] for c in calls] == [PRIMARY, FALLBACK] * llm.MAX_ATTEMPTS
+    assert sum(sleeps) <= 5

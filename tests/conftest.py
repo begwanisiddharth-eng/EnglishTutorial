@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import litellm
 import pytest
 
+import config
 import db
 import guardian
 import journal
@@ -20,6 +21,8 @@ import llm
 import pdf
 import vocab
 
+PRIMARY = "groq/primary-model"
+FALLBACK = "openai/fallback-model"
 TODAY = "2030-01-07"
 YESTERDAY = "2030-01-06"
 ARTICLE_DATE = "2025-01-02"
@@ -49,7 +52,7 @@ def fake_answer(prompt, schema):
             "written_examples": ["A revised example."], "synonyms": [], "antonyms": []}
 
 
-def fake_completion(model, messages, response_format, timeout):
+def fake_completion(model, messages, response_format, **options):
     """Stand in for litellm.completion."""
     return reply(fake_answer(messages[0]["content"], response_format))
 
@@ -75,6 +78,8 @@ def app_state(tmp_path, monkeypatch):
     monkeypatch.setattr(pdf, "PDF_PATH", tmp_path / "vocabulary.pdf")
     monkeypatch.setattr(pdf, "TEMP_PATH", tmp_path / "vocabulary.tmp")
     monkeypatch.setattr(journal, "today", lambda: TODAY)
+    monkeypatch.setattr(config, "LLM_MODEL", PRIMARY)
+    monkeypatch.setattr(config, "LLM_FALLBACK_MODEL", FALLBACK)
     monkeypatch.setattr(llm, "completion", fake_completion)
     monkeypatch.setattr(guardian, "search", fake_search)
     for fn in (llm.card_summaries, llm.choose_quotes, llm.entry_detail, llm.revise, REAL_SEARCH):

@@ -12,7 +12,7 @@ and the retest.
 | H1 | High | Edit silently deleted Guardian quotes it was not asked to touch | Drops count only when the model first says the feedback asked for one |
 | H2 | High | Accept or Delete during an Edit: the PDF and the database disagreed | The revision is checked again and written under `COLLECTION_LOCK`; the page locks the drawer footer |
 | M1 | Medium | The closing quote mark of a Guardian quote was cut off | The closing mark goes into the sentence splitter's lookbehind |
-| M2 | Medium | Groq's daily token limit: 74–90 s of useless retries, then "Try again in a minute" | Not retried; its own message |
+| M2 | Medium | Groq's daily token limit: 74–90 s of useless retries, then "Try again in a minute" | Not retried; its own message. Since superseded: any Groq refusal now switches to OpenAI at once (see DEBUG.md) |
 | L1 | Low | An empty `GROQ_API_KEY=` passed the startup check | Blank `.env` values count as unset |
 | L2 | Low | All Words search was not accent-insensitive | A JavaScript `fold`, matching `vocab.fold` |
 | L3 | Low | Card titles next to the "accepted" badge broke mid-word | Title starts below the badge and has the full width |

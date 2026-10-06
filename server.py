@@ -15,7 +15,6 @@ from pydantic import BaseModel
 import config
 import db
 import journal
-import llm
 import pdf
 
 STATIC = Path(__file__).parent / "static"
@@ -84,15 +83,18 @@ def guardian_unreachable(request: Request, exc: urllib.error.URLError):
 
 @app.exception_handler(openai.APIError)
 def llm_failed(request: Request, exc: openai.APIError):
-    """Explain an LLM failure (all litellm errors derive from openai.APIError), judged by its HTTP status."""
+    """Explain an LLM failure (all litellm errors derive from openai.APIError), judged by its HTTP status.
+
+    Rate limits and outages of the primary model never get here: llm.ask switches to the fallback.
+    """
     status = getattr(exc, "status_code", None)
+    provider = getattr(exc, "llm_provider", None) or "LLM"
     if status in (401, 403):
-        return error(502, "The LLM provider rejected the API key in .env.")
+        return error(502, f"The {provider} provider rejected its API key in .env.")
     if status == 404:
-        return error(502, f"The LLM provider does not know the model {config.LLM_MODEL}. Check LLM_MODEL in .env.")
-    if llm.daily_limit_reached(exc):
-        return error(502, "Groq's daily token allowance is used up. It refills gradually; try again later.")
-    return error(502, "The LLM service failed. Try again in a minute.")
+        return error(502, f"The {provider} provider does not know the model {getattr(exc, 'model', '')}. "
+                          "Check LLM_MODEL and LLM_FALLBACK_MODEL in .env.")
+    return error(502, "Both LLM services failed. Try again in a minute.")
 
 
 @app.get("/")

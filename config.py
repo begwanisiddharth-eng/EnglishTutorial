@@ -20,13 +20,15 @@ def load_env_file(path):
 load_env_file(Path(__file__).parent / ".env")
 
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
+# Used at once whenever the primary model refuses or fails, so a rate limit never means waiting.
+LLM_FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "openai/gpt-4o-mini")
 GUARDIAN_API_KEY = os.environ.get("GUARDIAN_API_KEY", "")
 
 
 def missing_settings():
-    """Return the names of settings .env must provide but does not, including the LLM provider's key."""
-    missing = [name for name, value in (("LLM_MODEL", LLM_MODEL), ("GUARDIAN_API_KEY", GUARDIAN_API_KEY))
-               if not value]
-    if LLM_MODEL:
-        missing += validate_environment(LLM_MODEL)["missing_keys"]
+    """Return the names of settings .env must provide but does not, including both LLM providers' keys."""
+    missing = [name for name, value in (("LLM_MODEL", LLM_MODEL), ("LLM_FALLBACK_MODEL", LLM_FALLBACK_MODEL),
+                                        ("GUARDIAN_API_KEY", GUARDIAN_API_KEY)) if not value]
+    for model in dict.fromkeys(m for m in (LLM_MODEL, LLM_FALLBACK_MODEL) if m):
+        missing += validate_environment(model)["missing_keys"]
     return missing

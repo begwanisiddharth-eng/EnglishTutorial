@@ -1,38 +1,36 @@
-"""LLM calls through LiteLLM, retried with tenacity."""
+"""LLM calls through LiteLLM: the primary model first, the fallback at once if it fails; retried with tenacity."""
 import json
+import logging
 
+import litellm
 from litellm import completion
 from pydantic import BaseModel, Field
-from tenacity import retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 import config
 
-TIMEOUT_SECONDS = 120
-# Groq's free tier limits tokens per minute; a rate-limited attempt is refused at once and costs
-# nothing, so keep retrying for longer than the one-minute window.
-RETRY_SECONDS = 90
-MAX_ATTEMPTS = 8
-# A rejected key (401, 403) or unknown model (404) will not recover. Judged by status, not exception
-# type: litellm reports Groq's "Invalid API Key" as a BadRequestError with status 401.
+log = logging.getLogger(__name__)
+litellm.suppress_debug_info = True  # its "Give Feedback / Get Help" banner on every failed call
+
+# Groq is never waited for: any refusal or failure (rate limit, daily allowance, outage, timeout,
+# malformed reply) switches to the fallback at once. Groq normally answers within 10 s.
+PRIMARY_TIMEOUT_SECONDS = 30
+FALLBACK_TIMEOUT_SECONDS = 60
+# Retries now cover only malformed replies and a failing fallback, so a few quick ones suffice.
+MAX_ATTEMPTS = 3
+# A rejected key (401, 403) or unknown model (404) is a setup mistake: reported, never retried or
+# hidden by the fallback. Judged by status, not exception type: litellm reports Groq's "Invalid API
+# Key" as a BadRequestError with status 401.
 PERMANENT_STATUS = {401, 403, 404}
 
 
-def daily_limit_reached(error):
-    """Return True if Groq refused because the daily token allowance is used up.
-
-    It arrives as the same 429 as the per-minute limit; only the message tells them apart.
-    """
-    return "tokens per day" in str(error)
+def permanent(error):
+    """Return True for errors that retrying or switching cannot fix: setup mistakes and interrupts."""
+    return not isinstance(error, Exception) or getattr(error, "status_code", None) in PERMANENT_STATUS
 
 
-def worth_retrying(error):
-    """Return True for transient failures and malformed replies; False for permanent errors and interrupts."""
-    return (isinstance(error, Exception) and getattr(error, "status_code", None) not in PERMANENT_STATUS
-            and not daily_limit_reached(error))
-
-
-retrying = retry(stop=stop_after_attempt(MAX_ATTEMPTS) | stop_after_delay(RETRY_SECONDS),
-                 wait=wait_exponential(min=2, max=20), reraise=True, retry=retry_if_exception(worth_retrying))
+retrying = retry(stop=stop_after_attempt(MAX_ATTEMPTS), wait=wait_exponential(min=1, max=4), reraise=True,
+                 retry=retry_if_exception(lambda error: not permanent(error)))
 
 CARD_PROMPT = """You are a lexicographer writing for advanced learners of English.
 For each entry below (a word, phrase, idiom, allusion, or foreign expression
@@ -149,15 +147,29 @@ class CardBatch(BaseModel):
     cards: list[Card]
 
 
-def ask(prompt, schema):
-    """Send one prompt and parse the reply into the given Pydantic schema."""
-    response = completion(
-        model=config.LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format=schema,
-        timeout=TIMEOUT_SECONDS,
-    )
-    return schema.model_validate_json(response.choices[0].message.content)
+def ask_model(model, timeout, prompt, schema, valid):
+    """Send one prompt to one model; return the reply parsed into schema, raising ValueError if not valid.
+
+    max_retries=0 because the OpenAI SDK would otherwise retry on its own, waiting as it likes.
+    """
+    response = completion(model=model, messages=[{"role": "user", "content": prompt}],
+                          response_format=schema, timeout=timeout, max_retries=0)
+    reply = schema.model_validate_json(response.choices[0].message.content)
+    if not valid(reply):
+        raise ValueError(f"reply does not fit the request: {reply}")
+    return reply
+
+
+def ask(prompt, schema, valid=lambda reply: True):
+    """Ask the primary model, switching to the fallback at once if it refuses, fails or replies wrongly."""
+    try:
+        return ask_model(config.LLM_MODEL, PRIMARY_TIMEOUT_SECONDS, prompt, schema, valid)
+    except Exception as error:
+        if permanent(error):
+            raise
+        log.warning("%s failed for %s, using %s. %s: %s", config.LLM_MODEL, schema.__name__,
+                    config.LLM_FALLBACK_MODEL, type(error).__name__, error)
+        return ask_model(config.LLM_FALLBACK_MODEL, FALLBACK_TIMEOUT_SECONDS, prompt, schema, valid)
 
 
 def shows_pronunciation(entry):
@@ -177,9 +189,8 @@ def make_card(entry, card):
 def card_summaries(entries):
     """Return a card dict (entry, pronunciation, respelling, meaning) for each entry."""
     listing = "\n".join(f"{i}. {entry}" for i, entry in enumerate(entries, 1))
-    batch = ask(CARD_PROMPT.format(entries=listing), CardBatch)
-    if len(batch.cards) != len(entries):
-        raise ValueError(f"expected {len(entries)} cards, got {len(batch.cards)}")
+    batch = ask(CARD_PROMPT.format(entries=listing), CardBatch,
+                valid=lambda reply: len(reply.cards) == len(entries))
     return [make_card(entry, card) for entry, card in zip(entries, batch.cards)]
 
 
@@ -189,9 +200,8 @@ def choose_quotes(entry, meaning, candidates):
     if not candidates:
         return []
     listing = "\n".join(f"{i}. {c['text']}" for i, c in enumerate(candidates, 1))
-    choice = ask(CHOOSE_PROMPT.format(entry=entry, meaning=meaning, listing=listing), Choice)
-    if not all(1 <= n <= len(candidates) for n in choice.chosen):
-        raise ValueError(f"chosen numbers out of range: {choice.chosen}")
+    choice = ask(CHOOSE_PROMPT.format(entry=entry, meaning=meaning, listing=listing), Choice,
+                 valid=lambda reply: all(1 <= n <= len(candidates) for n in reply.chosen))
     return [candidates[n - 1] for n in dict.fromkeys(choice.chosen)]
 
 
@@ -209,17 +219,20 @@ def revision_input(entry):
     return json.dumps(current, ensure_ascii=False, indent=1), quotes
 
 
+def quotes_to_drop(revision):
+    """Return the quote numbers to drop: only those named when the model says the feedback asked."""
+    return revision.drop_quotes if revision.feedback_asks_to_remove_quotes else []
+
+
 @retrying
 def revise(entry, feedback, max_examples):
     """Apply learner feedback; return the revised card fields and detail."""
     current, quotes = revision_input(entry)
     prompt = REVISE_PROMPT.format(entry=entry["entry"], current=current, feedback=feedback,
                                   max_examples=max_examples)
-    revision = ask(prompt, Revision)
-    dropped = revision.drop_quotes if revision.feedback_asks_to_remove_quotes else []
-    if not all(1 <= n <= len(quotes) for n in dropped):
-        raise ValueError(f"quote numbers out of range: {dropped}")
-    kept = [q for n, q in enumerate(quotes, 1) if n not in dropped]
+    revision = ask(prompt, Revision,
+                   valid=lambda reply: all(1 <= n <= len(quotes) for n in quotes_to_drop(reply)))
+    kept = [q for n, q in enumerate(quotes, 1) if n not in quotes_to_drop(revision)]
     written = [{"text": t, "source": None} for t in revision.written_examples]
     card = make_card(entry["entry"], Card(pronunciation=revision.pronunciation,
                                           respelling=revision.respelling, meaning=revision.meaning))
