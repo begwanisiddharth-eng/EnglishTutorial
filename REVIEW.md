@@ -1,136 +1,90 @@
-# Review: fourth round, end to end
+# Review: fifth round, Wiktionary pronunciations and senses
 
-Word Bank at `2debb04`, 5 October 2026. A full end-to-end test with real Groq,
-OpenAI and Guardian calls, a browser pass, and a reading of every source file for
-simplification. **Every finding below has been fixed.** DEBUG.md has the evidence
-and the retest.
+Word Bank at `26c9610` plus the uncommitted Wiktionary change, 11 October 2026.
+The change takes British IPA and senses from Wiktionary. It was then tested end
+to end with real Groq, OpenAI and Guardian calls, against a copy of the data.
+**Every defect found has been fixed.** 127 unit tests pass.
 
-## Findings
+## What changed
 
-| # | Severity | Finding | Fix |
-|---|---|---|---|
-| H1 | High | Edit silently deleted Guardian quotes it was not asked to touch | Drops count only when the model first says the feedback asked for one |
-| H2 | High | Accept or Delete during an Edit: the PDF and the database disagreed | The revision is checked again and written under `COLLECTION_LOCK`; the page locks the drawer footer |
-| M1 | Medium | The closing quote mark of a Guardian quote was cut off | The closing mark goes into the sentence splitter's lookbehind |
-| M2 | Medium | Groq's daily token limit: 74–90 s of useless retries, then "Try again in a minute" | Not retried; its own message. Since superseded: any Groq refusal now switches to OpenAI at once (see DEBUG.md) |
-| L1 | Low | An empty `GROQ_API_KEY=` passed the startup check | Blank `.env` values count as unset |
-| L2 | Low | All Words search was not accent-insensitive | A JavaScript `fold`, matching `vocab.fold` |
-| L3 | Low | Card titles next to the "accepted" badge broke mid-word | Title starts below the badge and has the full width |
-
-### H1. Edit deleted Guardian quotes
-
-**Evidence.** The test feedback had nothing to do with examples ("Shorten the
-principal meaning…", "Add one more synonym."). Even so, revisions removed
-Guardian quotes. Zugzwang and dulcet each lost all three. A lost quote cannot
-come back, because Edit never adds Guardian quotes.
-
-**Root cause.** The model decided which quotes survived, and it does so
-loosely. Every scheme was tried on both models, with the same entries and
-feedback:
-
-| Scheme | Unrelated revisions that lost a quote |
+| Part | Change |
 |---|---|
-| `keep_quotes` (the original: a quote is kept only if listed) | Groq 7 of 24; gpt-4o-mini 3 of 12 |
-| `drop_quotes` (a quote is removed only if listed) | gpt-4o-mini 4 of 33 |
-| `drop_quotes` gated by `feedback_asks_to_remove_quotes` (the fix) | gpt-4o-mini **0 of 33**; genuine requests to remove: **12 of 12 exact** |
+| `build_dictionary.py` (new) | One pass over the kaikki.org English extract (523 MB, about 2 minutes). Writes `dictionary.json`: per entry, sense groups `[{ipa, senses}]`, one per British IPA |
+| `dictionary.py` (new) | `lookup(entry)` by `vocab.fold`; the file is read once |
+| `llm.py` | The card prompt lists each entry's numbered groups; the model returns the group number and the code copies its IPA. The detail prompt is given Wiktionary's senses. Revise keeps the pronunciation unless asked |
+| `pdf.py` | CC BY-SA credit on the title page |
+| Tests | 20 new: the builder's rules, group choice, reply matching, the pronunciation gate |
 
-So the model is not the cause: both models drop quotes unasked. Switching to
-gpt-4o-mini alone would not have fixed it.
+Coverage: 4,426 of 5,000 entries are in Wiktionary (3,496 of 3,500 words, 932
+of 1,500 phrases); 2,384 have a British IPA (2,144 words, 242 phrases).
 
-**Fix.** `llm.Revision` now has a yes/no field, `feedback_asks_to_remove_quotes`,
-before `drop_quotes`, so the model decides it first. `llm.revise` ignores
-`drop_quotes` unless that field is true, and range-checks only the drops it
-applies.
+## Design decisions and the evidence for them
 
-**Not measured:** the gated scheme on Groq. Groq's daily allowance was used up
-when the comparison was run.
+| Decision | Why |
+|---|---|
+| Only IPA tagged Received-Pronunciation, UK or British | Untagged IPA in Wiktionary is often American |
+| Group senses by IPA, and let the model pick a group number | Homographs ("buffet", "adept", "abject") have a different pronunciation per sense. The model never retypes IPA, so it cannot corrupt it |
+| Follow a variant to every single-target main spelling, with an equal share of senses | "gibe" went only to "gybe" (sailing) and lost the taunting sense. Every multi-target link in the data was a wiktextract comma split ("close but no cigar" -> "close"), so those are not followed. A similarity check was tried first; "but no cigar" passed it, so it was dropped |
+| Normalise notation (`ɹ` to `r`, no syllable dots or tie bars) | Matches the IPA style the app already used: `/əˈbɹɪd͡ʒ.aɪ̯/` becomes `/əˈbrɪdʒaɪ/` |
 
-### H2. Accept or Delete while an Edit was running
+## Defects found and fixed
 
-**Evidence.** A revision was in flight, and an Accept arrived 0.3 s later. The
-entry was stored as accepted with the revised content, while the PDF kept the
-old content. A Delete during an Edit returned `200` with a `null` body. In the
-page, Accept and Delete stayed enabled while Edit ran.
+| # | Severity | Finding | Root cause | Fix |
+|---|---|---|---|---|
+| D1 | High | **Edit rewrote the pronunciation on unrelated feedback**, replacing Wiktionary's IPA with the model's | The revision returned a pronunciation and the code always used it; models rewrite it freely | `feedback_asks_to_change_pronunciation`, decided first, gates it, as for quote removal. Regression test fails without the gate; live check passed |
+| D2 | High | gpt-4o-mini returned one card per Wiktionary group instead of one per entry (6 cards for 5 entries, in 8 of 8 runs), so meanings landed on the wrong entries | Cards were matched to entries by position, and the listing invited a card per group | Each card echoes its `entry`; `llm.fits` rejects a batch whose entries differ (by `letters`: fold, then alphanumerics) or that names a missing group, so the call retries or falls back. 12 of 12 batches then correct; 40 entries with no rejection |
+| D3 | Medium | Groq misspelt a long field name ("wikictionary_group"), failing the reply | Model typo on an unusual key | Field renamed to `group` |
+| D4 | Medium | "gibe" lost its main sense | See variants above | Equal shares across main spellings |
+| D5 | Low | "close but no cigar" took the senses of "close" | wiktextract comma split | Multi-target links not followed |
 
-**Root cause.** `journal.revise` checked `editable()` before the LLM call (which
-takes seconds), and then wrote without checking again.
+Two fixes were tried and reverted because measurement showed no gain: a hint to
+prefer the commonest sense over the first listed ("terra firma" still led with
+the legal sense).
 
-**Fix.**
-- `journal.revise` keeps the LLM call outside the lock, then checks the entry
-  again under `COLLECTION_LOCK` and writes there. An accept or delete made in
-  the meantime wins, and the edit gets "… is already accepted" or "That entry
-  no longer exists".
-- In the page, `drawerAction` disables feedback, Edit, Accept and Delete while
-  any of them runs. `setFooter` now reads "loaded" from `entry.detail`, so its
-  `loaded` argument is gone.
+## End-to-end testing
 
-### M1. Closing quote marks cut off
+A script of 40 checks ran against a running server on a copy of the code and
+data. It covers the whole lifecycle: local-only middleware, the daily pick
+(made once), typed entries with and without accents, 5 More, refusals (blank,
+duplicate, already accepted, past day), detail generation (concurrent opens pay
+once, quotes first, at most 5 examples), revisions (quotes kept unless asked,
+pronunciation kept, exact quote removal), accept and delete with PDF checks,
+the PDF locked by a viewer, an accept racing an edit, and the Wiktionary
+behaviour below.
 
-**Root cause.** The optional closing mark in `SENTENCE_END` was part of the
-separator, which `re.split` discards:
-`'“… a crime.” The book…'` split as `'“… a crime.'`.
-
-**Fix.** `(?:(?<=[.!?])|(?<=[.!?]["”’]))\s+(?=…)`: the closing mark is now only
-looked behind, so it stays with its sentence.
-
-One quote, from an "incubus" article, still opens with `“` and has no closing
-mark. That is correct: the quotation runs on into the next sentence in the
-article.
-
-### M2. Groq's daily token limit
-
-**Root cause.** Groq sends the daily limit as the same 429 and `"type":"tokens"`
-as the per-minute limit. Only the message differs: "tokens per day (TPD): Limit
-200000".
-
-**Fix.**
-- `llm.daily_limit_reached` checks the message text. `worth_retrying` does not
-  retry it.
-- `server.llm_failed` answers "Groq's daily token allowance is used up. It
-  refills gradually; try again later."
-- The test fixture uses Groq's exact message, so a change in Groq's wording
-  would show up in the tests.
-
-### L1–L3
-
-- **L1.** `config.load_env_file` removes variables whose value in `.env` is blank,
-  so `validate_environment` names them.
-- **L2.** `fold()` in `static/app.js`: lowercase, œ/æ, NFKD, then marks
-  removed.
-- **L3.** The root cause was not the wrapping rule. A `<button>` sizes itself to
-  its longest word, and here that word plus the 4rem kept clear for the badge
-  was wider than the card. The old `word-break: break-word` hid this by breaking
-  mid-word; a plain `overflow-wrap: break-word` let the button grow wider than
-  the card and run under the badge. `hyphens: auto` was tried, but Chromium
-  produced no hyphen, so it was dropped. Now the title sits below the badge
-  (`margin-top: 1.1rem`) with the full width, and `overflow-wrap: anywhere`
-  keeps any extreme word inside the card.
-
-## Simplification
-
-The code was already lean; no dead code was found.
-
-| # | Done | Change |
+| Run | Setup | Result |
 |---|---|---|
-| S1 | Yes | Quote removal is opt-in and gated (H1); same size as before |
-| S2 | Yes | Every write to the collection goes through `COLLECTION_LOCK` (H2) |
-| S3 | Yes | `drawerAction` replaces the `setFooter` calls after each drawer action; `setFooter` lost its `loaded` argument |
-| S4 | Yes | `db.card_json` replaces the duplicated card encoding in `insert_cards` and `update_card` |
-| S5 | Yes | One `fold()` for the page search (L2) |
+| 1 | Groq first | 38 of 40. Failures: D1, and a bug in the test script itself (it typed an entry still on today's page); both fixed |
+| 2 | Groq first | **40 of 40.** 13 fallbacks, all Groq rate limits; no tracebacks or 5xx. Wiktionary IPA used on 12 of the 12 cards that had one |
+| 3 | Groq unreachable (all OpenAI) | **40 of 40.** 22 fallbacks; Wiktionary IPA used on 10 of 10 |
+| - | `GROQ_API_KEY=bad` | Reported as a rejected key in 0.48 s, no fallback |
+| - | Browser (Playwright) | IPA and grounded senses shown; 0 console errors |
 
-Considered and rejected:
+Wiktionary checks that passed: "raison d'etat" typed without the accent gets
+`/reɪˌzɒ̃ deɪˈtɑː/`; "unfathomable" has the stress on "fath" (Groq had put it on
+"thom"); "buffet" as a meal gets `/ˈbʊfeɪ/`; "adept" gets one of its two IPAs;
+"gibe" includes the taunting sense; "photobomb" (not in the list) gets the
+model's IPA; the PDF contains the IPA and the credit.
 
-- **A names-only query for `refuse_if_accepted`.** At 5,000 accepted entries
-  it would save about 110 ms (125 ms against 14 ms), next to a 55 s PDF
-  rebuild.
-- **Merging the two Guardian error handlers.** They give different messages.
-- **Pruning `DETAIL_LOCKS`.** It holds one small lock per opened entry, so it
-  is not a leak.
+## Measurements
+
+| Measure | Before | After |
+|---|---|---|
+| Card batch prompt (median tokens) | 349 | 748 |
+| Malformed respellings, Groq (of 40) | 2 | 4-5 |
+| Malformed respellings, gpt-4o-mini (of 40) | - | 0-1 |
+| Card meanings, 30 compared side by side | - | 26 as good, 1 better, 3 worse or debatable |
 
 ## Remaining (not code defects)
 
-- **The language model's pronunciations,** on both models. "raison d'état" was
-  wrong on both; Groq also got the stress of "unfathomable" wrong. There were
-  occasional American spellings ("savory", "cozy"). These are documented in
-  the README.
-- **The gated quote rule on Groq** is unmeasured (see H1).
+- **52% of entries have no British IPA in Wiktionary**, phrases especially
+  (242 of 1,500). They get the model's IPA.
+- **Respellings are still written by the model;** Groq's were no better for
+  having the IPA ("uh-DEP-t" in run 2). Deriving them from the IPA in code would
+  fix this.
+- **Wiktionary's own notation shows through** in places: optional stress
+  `(ˌ)` and syllabic marks (`/(ˌ)ʌnˈfæðəməbl̩/`). Correct, but less tidy.
+- **Meanings sometimes follow Wiktionary's first-listed sense** rather than the
+  commonest.
+- **Typed entries outside the master list** get no Wiktionary data.
+- **Wiktionary gaps:** some common words ("genesis") have no British IPA.

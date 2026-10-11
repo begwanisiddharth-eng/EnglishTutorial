@@ -1,4 +1,4 @@
-"""Shared fixtures: temporary data files, a fixed today, and fakes at the two network boundaries.
+"""Shared fixtures: temporary data files, a fixed today, an empty dictionary, and network fakes.
 
 Only llm.completion and guardian.search are replaced, so every layer above them
 (card summaries, detail building, quote choosing, revision) runs for real.
@@ -15,6 +15,7 @@ import pytest
 
 import config
 import db
+import dictionary
 import guardian
 import journal
 import llm
@@ -37,9 +38,9 @@ def reply(data):
 def fake_answer(prompt, schema):
     """Return a valid reply for each prompt type, without calling an LLM."""
     if schema is llm.CardBatch:
-        entries = re.findall(r"^\d+\. (.*)$", prompt.split("Entries:")[1], re.MULTILINE)
-        return {"cards": [{"pronunciation": "/x/", "respelling": "X", "meaning": f"meaning of {e}"}
-                          for e in entries]}
+        blocks = re.findall(r"^\d+\. (.*)\n((?:   .*\n?)*)", prompt.split("Entries:")[1], re.MULTILINE)
+        return {"cards": [{"entry": e, "meaning": f"meaning of {e}", "group": int("Wiktionary group 1" in listed),
+                           "pronunciation": "/x/", "respelling": "X"} for e, listed in blocks]}
     if schema is llm.Detail:
         return {"senses": [{"part_of_speech": "verb", "definition": "d"}],
                 "examples": ["A written example.", "Another written example."],
@@ -49,6 +50,7 @@ def fake_answer(prompt, schema):
     return {"pronunciation": "/y/", "respelling": "Y", "meaning": "revised meaning",
             "senses": [{"part_of_speech": "noun", "definition": "r"}],
             "feedback_asks_to_remove_quotes": False, "drop_quotes": [],
+            "feedback_asks_to_change_pronunciation": False,
             "written_examples": ["A revised example."], "synonyms": [], "antonyms": []}
 
 
@@ -82,6 +84,7 @@ def app_state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LLM_FALLBACK_MODEL", FALLBACK)
     monkeypatch.setattr(llm, "completion", fake_completion)
     monkeypatch.setattr(guardian, "search", fake_search)
+    monkeypatch.setattr(dictionary, "entries", lambda: {})
     for fn in (llm.card_summaries, llm.choose_quotes, llm.entry_detail, llm.revise, REAL_SEARCH):
         monkeypatch.setattr(fn.retry, "sleep", lambda seconds: None)
     return tmp_path

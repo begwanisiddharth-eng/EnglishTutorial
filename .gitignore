@@ -17,3 +17,6 @@ wheels/
 
 # Partial PDF builds
 output/*.tmp
+
+# Wiktionary extract used by build_dictionary.py
+downloads/

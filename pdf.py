@@ -28,6 +28,9 @@ FONT_FILES = {"Serif": "DejaVuSerif.ttf", "Serif-Bold": "DejaVuSerif-Bold.ttf",
               "Serif-Italic": "DejaVuSerif-Italic.ttf", "Sans": "DejaVuSans.ttf",
               "Sans-Bold": "DejaVuSans-Bold.ttf"}
 LEVELS = {"Section": 0, "Entry": 1}
+CREDIT = ("British pronunciations and the senses that definitions are based on come, where available, "
+          "from Wiktionary (en.wiktionary.org), under the Creative Commons Attribution-ShareAlike licence, "
+          "via kaikki.org. Quotations are from The Guardian.")
 
 for font_name, file_name in FONT_FILES.items():
     pdfmetrics.registerFont(TTFont(font_name, FONTS / file_name))
@@ -150,7 +153,7 @@ def front_matter(count):
     return [Spacer(1, 6 * cm), para("Word Bank", "title"),
             para("Accepted words and phrases for advanced learners of English", "subtitle"),
             para(f"{count} {'entry' if count == 1 else 'entries'}  ·  updated {updated}", "subtitle"),
-            PageBreak(), para("Contents", "contents"), contents]
+            Spacer(1, 8 * cm), para(CREDIT, "source"), PageBreak(), para("Contents", "contents"), contents]
 
 
 def build(entries):

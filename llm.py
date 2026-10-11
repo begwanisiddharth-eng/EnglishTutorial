@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 import config
+import dictionary
+import vocab
 
 log = logging.getLogger(__name__)
 litellm.suppress_debug_info = True  # its "Give Feedback / Get Help" banner on every failed call
@@ -35,29 +37,36 @@ retrying = retry(stop=stop_after_attempt(MAX_ATTEMPTS), wait=wait_exponential(mi
 CARD_PROMPT = """You are a lexicographer writing for advanced learners of English.
 For each entry below (a word, phrase, idiom, allusion, or foreign expression
 used in English), give:
-- pronunciation: the British English (Received Pronunciation) IPA transcription
+- entry: the entry exactly as written after its number.
+- meaning: a definition of its principal meaning, at most 20 words. Write a
+  definition, never an example sentence. Where Wiktionary's senses are listed,
+  base it on them; they may use American spelling and include rare or technical
+  senses, so choose the meaning in current general use.
+- group: the number of the listed Wiktionary group that meaning comes
+  from, or 0 if no groups are listed or none of them has it.
+- pronunciation: if that group has a pronunciation, copy it exactly. Otherwise,
+  the British English (Received Pronunciation) IPA transcription
   as given by the Oxford or Cambridge dictionaries, between slashes, with
   correct primary and secondary stress marks. For foreign expressions, give the
   pronunciation British English speakers use.
 - respelling: the same pronunciation as a simple respelling for readers who do
-  not know IPA. Syllables joined by hyphens, the stressed syllable in capitals,
-  words separated by spaces. Use sh as in shoe, ch as in church, zh as in
+  not know IPA. Syllables joined by hyphens, only the syllable with primary
+  stress (after ˈ) in capitals, words separated by spaces. Use sh as in shoe, ch as in church, zh as in
   measure, th as in thin. Examples: manumit -> man-yoo-MIT,
   volatile -> VOL-uh-tyle, faute de mieux -> foht duh MYUR.
-- meaning: a definition of its principal meaning, at most 20 words. Write a
-  definition, never an example sentence.
 
-Use British spelling. Return the cards in the same order as the entries.
+Use British spelling. Return exactly one card per numbered entry, in the same
+order, even when an entry lists several Wiktionary groups.
 
 Entries:
 {entries}"""
 
 
 DETAIL_PROMPT = """You are a lexicographer writing for advanced learners of English.
-For the entry "{entry}" give:
+{wiktionary}For the entry "{entry}" give:
 - senses: every distinct meaning in current use, most common first. For each,
   the part of speech (for multi-word entries: idiom, phrase, or expression) and
-  a clear definition of at most 25 words.
+  a clear definition of at most 25 words, in your own words.
 - examples: up to 5 natural example sentences in British English showing the
   entry in use, covering different senses where possible. Each sentence must
   contain the entry or an inflected form of it.
@@ -88,7 +97,8 @@ Current content (JSON):
 The Guardian quotes are real published sentences: never reword them. First set
 feedback_asks_to_remove_quotes: true only if the feedback explicitly asks to remove
 one or more Guardian quotes. Only then list their numbers in drop_quotes; otherwise
-leave it empty.
+leave it empty. Likewise set feedback_asks_to_change_pronunciation: true only if the
+feedback asks to change the pronunciation or the respelling.
 
 Learner's feedback:
 {feedback}
@@ -123,9 +133,11 @@ class Revision(BaseModel):
     Models dropped quotes unasked: about a quarter of the time when quotes had to be listed to
     be kept, and still one time in eight when listed to be dropped. So a drop counts only when
     the model first says the feedback asked for it; the flag comes first so it is decided first.
+    Models also replaced Wiktionary's pronunciation unasked, so the pronunciation is gated the same way.
     """
     feedback_asks_to_remove_quotes: bool
     drop_quotes: list[int]
+    feedback_asks_to_change_pronunciation: bool
     pronunciation: str
     respelling: str
     meaning: str
@@ -142,9 +154,22 @@ class Card(BaseModel):
     meaning: str
 
 
+class Summary(BaseModel):
+    """A card as the model writes it: the entry, its meaning, then the Wiktionary group it comes from.
+
+    The entry is repeated so that cards can be matched to entries: gpt-4o-mini sometimes made one
+    card per Wiktionary group, and a count alone would not catch cards in the wrong order.
+    """
+    entry: str
+    meaning: str
+    group: int
+    pronunciation: str
+    respelling: str
+
+
 class CardBatch(BaseModel):
     """Cards for a list of entries, in order."""
-    cards: list[Card]
+    cards: list[Summary]
 
 
 def ask_model(model, timeout, prompt, schema, valid):
@@ -185,13 +210,45 @@ def make_card(entry, card):
     return {"entry": entry, **fields}
 
 
+def wiktionary_listing(groups):
+    """Return an entry's Wiktionary groups as indented lines for the card prompt."""
+    lines = []
+    for n, group in enumerate(groups, 1):
+        said = f"pronunciation {group['ipa']}" if group["ipa"] else "no British pronunciation"
+        lines += [f"   Wiktionary group {n}, {said}:"] + [f"     {sense}" for sense in group["senses"]]
+    return "\n".join(lines or ["   (not in Wiktionary)"])
+
+
+def summary_card(entry, summary, groups):
+    """Make the card, taking the pronunciation from the chosen Wiktionary group when it has one."""
+    chosen = groups[summary.group - 1]["ipa"] if summary.group else ""
+    return make_card(entry, Card(pronunciation=chosen or summary.pronunciation,
+                                 respelling=summary.respelling, meaning=summary.meaning))
+
+
+def letters(text):
+    """Return text folded to its letters and digits, so quote marks and accents do not matter."""
+    return "".join(c for c in vocab.fold(text) if c.isalnum())
+
+
+def fits(batch, entries, groups):
+    """Return True if the cards are for exactly these entries, in order, each naming one of its groups or 0."""
+    return ([letters(card.entry) for card in batch.cards] == [letters(entry) for entry in entries]
+            and all(0 <= card.group <= len(g) for card, g in zip(batch.cards, groups)))
+
+
 @retrying
 def card_summaries(entries):
-    """Return a card dict (entry, pronunciation, respelling, meaning) for each entry."""
-    listing = "\n".join(f"{i}. {entry}" for i, entry in enumerate(entries, 1))
-    batch = ask(CARD_PROMPT.format(entries=listing), CardBatch,
-                valid=lambda reply: len(reply.cards) == len(entries))
-    return [make_card(entry, card) for entry, card in zip(entries, batch.cards)]
+    """Return a card dict (entry, pronunciation, respelling, meaning) for each entry.
+
+    Where Wiktionary has the entry, the meaning is based on its senses and the pronunciation is
+    Wiktionary's British IPA for the group the meaning comes from; the model only picks the group.
+    """
+    groups = [dictionary.lookup(entry) for entry in entries]
+    listing = "\n".join(f"{i}. {entry}\n{wiktionary_listing(g)}"
+                        for i, (entry, g) in enumerate(zip(entries, groups), 1))
+    batch = ask(CARD_PROMPT.format(entries=listing), CardBatch, valid=lambda reply: fits(reply, entries, groups))
+    return [summary_card(entry, card, g) for entry, card, g in zip(entries, batch.cards, groups)]
 
 
 @retrying
@@ -234,15 +291,29 @@ def revise(entry, feedback, max_examples):
                    valid=lambda reply: all(1 <= n <= len(quotes) for n in quotes_to_drop(reply)))
     kept = [q for n, q in enumerate(quotes, 1) if n not in quotes_to_drop(revision)]
     written = [{"text": t, "source": None} for t in revision.written_examples]
-    card = make_card(entry["entry"], Card(pronunciation=revision.pronunciation,
-                                          respelling=revision.respelling, meaning=revision.meaning))
+    if revision.feedback_asks_to_change_pronunciation:
+        pronunciation, respelling = revision.pronunciation, revision.respelling
+    else:
+        pronunciation, respelling = entry["pronunciation"], entry["respelling"]
+    card = make_card(entry["entry"], Card(pronunciation=pronunciation, respelling=respelling,
+                                          meaning=revision.meaning))
     detail = {"senses": [s.model_dump() for s in revision.senses],
               "examples": (kept + written)[:max_examples],
               "synonyms": revision.synonyms, "antonyms": revision.antonyms}
     return card, detail
 
 
+def wiktionary_senses(entry):
+    """Return the detail prompt's paragraph of Wiktionary senses, or "" if Wiktionary lacks the entry."""
+    senses = [sense for group in dictionary.lookup(entry) for sense in group["senses"]]
+    if not senses:
+        return ""
+    listed = "\n".join(f"- {sense}" for sense in senses)
+    return ("Wiktionary's senses for this entry follow. Base the senses on them; they may use American\n"
+            f"spelling and include rare, dated or technical senses.\n{listed}\n\n")
+
+
 @retrying
 def entry_detail(entry):
     """Return all senses and example sentences for one entry as a dict."""
-    return ask(DETAIL_PROMPT.format(entry=entry), Detail).model_dump()
+    return ask(DETAIL_PROMPT.format(entry=entry, wiktionary=wiktionary_senses(entry)), Detail).model_dump()

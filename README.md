@@ -22,8 +22,8 @@ Word Bank draws from a fixed list of **5,000 entries**: 3,500 GRE-level words, a
 1,500 phrases, idioms, allusions and foreign expressions used in English.
 
 - **Every day** it picks five entries you have not mastered yet. For each it shows
-  a pronunciation (a simple respelling and British IPA), an audio button, and the
-  principal meaning.
+  a pronunciation (a simple respelling and British IPA, from Wiktionary where it
+  has one), an audio button, and the principal meaning.
 - **Click an entry** to study it. You get every meaning, up to five example
   sentences (real quotes from **The Guardian** first, each linked to its article),
   and synonyms and antonyms.
@@ -128,8 +128,8 @@ While the side panel is open, Tab stays inside it.
 
 | Step | What happens | Services used |
 |---|---|---|
-| A card is created (daily pick, 5 More, Add) | The language model writes the pronunciation, respelling and principal meaning | One AI call per batch |
-| An entry is opened for the first time | The language model writes the meanings and examples. The Guardian is searched; every sentence that really uses the entry is collected, and the model picks the best three | Two AI calls; one Guardian search |
+| A card is created (daily pick, 5 More, Add) | The entry's British pronunciation and senses are looked up in a local copy of Wiktionary. The language model writes the principal meaning from those senses and the respelling. The pronunciation is Wiktionary's, copied exactly, when it has one | One AI call per batch |
+| An entry is opened for the first time | The language model writes the meanings, based on Wiktionary's senses, and examples. The Guardian is searched; every sentence that really uses the entry is collected, and the model picks the best three | Two AI calls; one Guardian search |
 | You press Edit | The language model revises the entry from your instructions | One AI call |
 | You press Accept or Delete | The PDF is rebuilt from scratch, then the change is saved | None |
 
@@ -148,6 +148,21 @@ malformed answer. So:
 
 Each switch is written in the terminal window as one line, with Groq's reason.
 
+### Where pronunciations and meanings come from
+
+`dictionary.json` holds Wiktionary's British pronunciation (IPA) and senses for
+4,426 of the 5,000 entries; 2,384 of them have a British pronunciation. It is
+built once from the free [kaikki.org](https://kaikki.org) extract of Wiktionary
+and is part of the app, so lookups need no network.
+
+- **A word with two pronunciations** ("buffet": a meal, or to strike) is shown
+  with the pronunciation that belongs to the meaning on the card.
+- **A variant spelling** ("gibe") uses its main spellings' entries ("jibe",
+  "gybe").
+- **An entry Wiktionary lacks, or one without a British pronunciation,** gets
+  the language model's pronunciation, as before.
+- **Edit keeps the pronunciation** unless your instructions ask to change it.
+
 Everything is stored on your computer. Only the words being looked up are sent to
 Groq, OpenAI and The Guardian.
 
@@ -159,6 +174,7 @@ Groq, OpenAI and The Guardian.
 | `data/remaining.txt` | The entries not yet accepted, which the daily pick draws from |
 | `output/vocabulary.pdf` | Your PDF. It is rebuilt automatically, so it can always be recreated |
 | `VOCABBASE.TXT` | The master list of 5,000 entries. It is never changed |
+| `dictionary.json` | Wiktionary's pronunciations and senses for the master list. It changes only when rebuilt |
 
 **Backing up:** copy `data/` somewhere safe from time to time. It holds all your
 progress.
@@ -201,18 +217,47 @@ restarting the app.
 
 ### The language model
 
-**Pronunciations and spellings are sometimes wrong.**
-- *Why:* the model writes IPA and respellings from patterns it has learned; it
-  does not look them up. Foreign phrases and stress are the weak spots, on Groq
-  and OpenAI alike. In testing, both got "raison d'état" wrong. Cards
-  occasionally used American spelling ("savory") although British is asked for.
-- *Solutions:* use Edit ("use the British pronunciation"). A lasting fix would
-  take pronunciations from a dictionary source instead of the model.
+**About half the entries still get the model's pronunciation, which is
+sometimes wrong.**
+- *Why:* Wiktionary has a British pronunciation for 2,384 of the 5,000 entries
+  (2,144 of the 3,500 words, but only 242 of the 1,500 phrases). For the rest,
+  and for words you type that are not in the list, the model writes the IPA from
+  patterns it has learned. Foreign phrases and stress are its weak spots.
+  Pronunciations Wiktionary marks only as American, or not marked at all, are
+  not used, because they are often American.
+- *Solutions:* use Edit ("the stress is on the second syllable"). A second
+  dictionary source with British IPA for phrases would close more of the gap.
 
-**Definitions and written examples can be wrong.**
-- *Why:* the same reason: they are generated, not looked up.
+**The respelling ("ab-JEKT") is still written by the model.**
+- *Why:* Wiktionary has no respellings. Given the IPA, Groq got the format wrong
+  (stress in the wrong syllable, or capitals missing) on 4 or 5 of 40 cards in
+  testing, against 2 in 40 before it was given the IPA, so it did not help on
+  Groq. OpenAI got 0 or 1 of 40 wrong.
+- *Solutions:* Edit; or generate the respelling from the IPA in code, with a
+  table of sounds.
+
+**Definitions and written examples can still be wrong.**
+- *Why:* the model writes them in its own words. They are now based on
+  Wiktionary's senses where it has the entry, but the model chooses among those
+  senses, and occasionally leans on the one Wiktionary lists first rather than
+  the commonest (for "terra firma" it led with the legal sense). In a side-by-side
+  check of 30 entries, 26 meanings were about as good as before, 1 better and 3
+  worse or debatable.
 - *Solutions:* treat them as a good dictionary draft and use Edit. Guardian
   quotes are real text, which is why they come first.
+
+**Wiktionary is edited by volunteers.**
+- *Why:* it is good, but not perfect. Some common words lack a British
+  pronunciation ("genesis"), and senses include rare and technical ones.
+- *Solutions:* the model fills gaps and is told to prefer senses in current
+  general use. Rebuilding `dictionary.json` picks up later corrections.
+
+**Cards cost more tokens.**
+- *Why:* each card request now carries Wiktionary's senses: a typical batch of
+  five grew from about 350 to 750 tokens, so Groq's free tier is used up a
+  little sooner.
+- *Solutions:* send fewer senses per entry (`MAX_SENSES` in
+  `build_dictionary.py`).
 
 **Entries written on the same day may come from two different models.**
 - *Why:* when Groq cannot answer, OpenAI writes that part. The two write in
@@ -297,11 +342,14 @@ can be off-topic.**
 
 ## Problems found and how they were fixed
 
-The app went through four code reviews, and full tests with the real Groq, OpenAI
+The app went through five code reviews, and full tests with the real Groq, OpenAI
 and Guardian services.
 
 | Problem | How it is handled now |
 |---|---|
+| Pronunciations came only from the model, which got some wrong ("unfathomable", "gibe", "entourage", "adept" as a noun) | Taken from Wiktionary where it has a British one: 2,384 entries |
+| **Edit sometimes rewrote the pronunciation you had not asked about** | It is kept unless your instructions ask to change it |
+| With Wiktionary's senses listed, OpenAI sometimes returned one card per sense, so cards got the wrong meanings | Each card names its entry, and a reply that does not match the entries is rejected and asked again |
 | Groq's free-tier limits made the app wait for up to 90 seconds, then sometimes fail; when its daily allowance ran out, nothing worked | Groq is never waited for. If it refuses, OpenAI answers straight away. In testing, 36 refusals during a full test caused no errors, and the slowest panel took 6 seconds instead of 81 |
 | A wrong Groq key was retried for over a minute, then reported as a service failure | Recognised at once, and reported as a rejected key |
 | **Edit sometimes deleted Guardian quotes you had not asked about** (about one edit in four, on both Groq and OpenAI) | Quotes are removed only when your instructions ask for it |
@@ -320,10 +368,16 @@ and Guardian services.
 ## For developers
 
 ```
-uv run pytest                      # 107 tests; no API calls, real data untouched
+uv run pytest                      # 127 tests; no API calls, real data untouched
 uv run build_vocab.py              # check the vocabulary part files
 uv run build_vocab.py --write      # rebuild VOCABBASE.TXT from parts/
+uv run build_dictionary.py         # rebuild dictionary.json from Wiktionary
 ```
+
+`build_dictionary.py` downloads the 523 MB kaikki.org extract to `downloads/`
+(not in git) the first time, then takes about two minutes. Rebuild it after
+changing `VOCABBASE.TXT`. Wiktionary's content is under CC BY-SA; the PDF's title
+page credits it.
 
 | Path | Purpose |
 |---|---|
@@ -334,6 +388,7 @@ uv run build_vocab.py --write      # rebuild VOCABBASE.TXT from parts/
 | `vocab.py` | Master list and working list (`data/remaining.txt`) |
 | `llm.py` | Language-model prompts via LiteLLM: Groq first, OpenAI on failure |
 | `guardian.py` | Guardian search and sentence matching |
+| `dictionary.py`, `build_dictionary.py` | Wiktionary lookup, and the script that builds `dictionary.json` |
 | `pdf.py` | PDF generation (ReportLab) |
 | `static/` | The page: HTML, CSS, JavaScript |
 | `tests/` | Automated tests |
