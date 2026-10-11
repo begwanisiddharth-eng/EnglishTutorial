@@ -28,9 +28,8 @@ FONT_FILES = {"Serif": "DejaVuSerif.ttf", "Serif-Bold": "DejaVuSerif-Bold.ttf",
               "Serif-Italic": "DejaVuSerif-Italic.ttf", "Sans": "DejaVuSans.ttf",
               "Sans-Bold": "DejaVuSans-Bold.ttf"}
 LEVELS = {"Section": 0, "Entry": 1}
-CREDIT = ("British pronunciations and the senses that definitions are based on come, where available, "
-          "from Wiktionary (en.wiktionary.org), under the Creative Commons Attribution-ShareAlike licence, "
-          "via kaikki.org. Quotations are from The Guardian.")
+CREDIT = ("British pronunciations come, where available, from Wiktionary (en.wiktionary.org), under the "
+          "Creative Commons Attribution-ShareAlike licence, via kaikki.org. Quotations are from The Guardian.")
 
 for font_name, file_name in FONT_FILES.items():
     pdfmetrics.registerFont(TTFont(font_name, FONTS / file_name))

@@ -111,6 +111,15 @@ def test_revise_drops_only_the_quotes_named(monkeypatch):
     assert [e["text"] for e in detail["examples"]] == ["quote 1", "quote 3", "w"]
 
 
+@pytest.mark.parametrize("asks, drops", [("false", []), ("true", [1])])
+def test_revise_does_not_store_a_guardian_quote_as_a_written_example(monkeypatch, asks, drops):
+    copied = revision_reply(drop_quotes=drops, feedback_asks_to_remove_quotes=asks).replace(
+        '"written_examples": ["w"]', '"written_examples": ["quote 1", "Quote 2 ", "w"]')
+    stub_completion(monkeypatch, [copied])
+    _, detail = llm.revise(entry_with_quotes(2), "shorten the meaning", 5)
+    assert [e["text"] for e in detail["examples"] if not e["source"]] == ["w"]
+
+
 def cards_reply(*cards):
     """Return a card batch reply with one card per (entry, group, pronunciation)."""
     return json.dumps({"cards": [{"entry": entry, "meaning": f"meaning of {entry}", "group": group,
@@ -186,8 +195,17 @@ def test_card_takes_the_pronunciation_of_the_chosen_wiktionary_group(monkeypatch
     calls = stub_completion(monkeypatch, [card_reply(group)])
     assert llm.card_summaries(["buffet"])[0]["pronunciation"] == expected
     prompt = calls[0]["messages"][0]["content"]
-    assert "Wiktionary group 1, pronunciation /ˈbʊfeɪ/:\n     (noun) A sideboard." in prompt
-    assert "Wiktionary group 2, no British pronunciation:" in prompt
+    assert "pronunciation 1: /ˈbʊfeɪ/, for these senses:\n     (noun) A sideboard." in prompt
+    assert "pronunciation 2: not listed, for these senses:" in prompt
+
+
+@pytest.mark.parametrize("group", [0, 1, 3])
+def test_single_wiktionary_pronunciation_is_used_without_listing_senses(monkeypatch, group):
+    monkeypatch.setattr(llm.dictionary, "entries", lambda: {"abate": [{"ipa": "/əˈbeɪt/", "senses": []}]})
+    calls = stub_completion(monkeypatch, [card_reply(group, "abate")])
+    assert llm.card_summaries(["abate"])[0]["pronunciation"] == "/əˈbeɪt/"
+    assert len(calls) == 1
+    assert "1. abate\n   pronunciation: /əˈbeɪt/\n" in calls[0]["messages"][0]["content"] + "\n"
 
 
 def test_card_naming_a_group_that_does_not_exist_switches_to_fallback(monkeypatch):
@@ -197,16 +215,14 @@ def test_card_naming_a_group_that_does_not_exist_switches_to_fallback(monkeypatc
     assert [c["model"] for c in calls] == [PRIMARY, FALLBACK]
 
 
-def test_entry_not_in_wiktionary_is_marked_and_keeps_the_model_pronunciation(monkeypatch):
+def test_entry_without_a_wiktionary_pronunciation_is_marked_and_keeps_the_model_one(monkeypatch):
     calls = stub_completion(monkeypatch, [card_reply(0, "abate")])
     assert llm.card_summaries(["abate"])[0]["pronunciation"] == "/model/"
-    assert "1. abate\n   (not in Wiktionary)" in calls[0]["messages"][0]["content"]
+    assert "1. abate\n   (no pronunciation listed)" in calls[0]["messages"][0]["content"]
 
 
-def test_detail_prompt_lists_wiktionary_senses_only_when_there_are_some(monkeypatch):
+def test_detail_prompt_leaves_the_senses_to_the_model(monkeypatch):
     monkeypatch.setattr(llm.dictionary, "entries", lambda: {"buffet": BUFFET})
-    calls = stub_completion(monkeypatch, [DETAIL_REPLY, DETAIL_REPLY])
+    calls = stub_completion(monkeypatch, [DETAIL_REPLY])
     llm.entry_detail("buffet")
-    llm.entry_detail("abate")
-    assert "- (noun) A sideboard.\n- (verb) To strike repeatedly." in calls[0]["messages"][0]["content"]
-    assert "Wiktionary" not in calls[1]["messages"][0]["content"]
+    assert "sideboard" not in calls[0]["messages"][0]["content"]

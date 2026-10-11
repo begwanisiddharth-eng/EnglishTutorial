@@ -1,90 +1,99 @@
-# Review: fifth round, Wiktionary pronunciations and senses
+# Review: Wiktionary pronunciations
 
-Word Bank at `26c9610` plus the uncommitted Wiktionary change, 11 October 2026.
-The change takes British IPA and senses from Wiktionary. It was then tested end
-to end with real Groq, OpenAI and Guardian calls, against a copy of the data.
-**Every defect found has been fixed.** 127 unit tests pass.
+## Sixth round: Wiktionary for pronunciations only
 
-## What changed
+Word Bank at `b1c8b70` plus the uncommitted change below, 11 October 2026.
+133 unit tests pass; the end-to-end run passed 41 of 41.
+
+### Why
+
+The fifth round grounded meanings in Wiktionary's senses. Its own side-by-side
+check (30 entries: 1 better, 3 worse or debatable) and later examples ("cognate"
+opening with "related by blood") showed the grounding did not pay: Wiktionary
+lists senses roughly in historical order, and the model leads with whatever
+comes first. So meanings are the model's own again, and Wiktionary supplies
+only British IPA.
+
+### What changed
 
 | Part | Change |
 |---|---|
-| `build_dictionary.py` (new) | One pass over the kaikki.org English extract (523 MB, about 2 minutes). Writes `dictionary.json`: per entry, sense groups `[{ipa, senses}]`, one per British IPA |
-| `dictionary.py` (new) | `lookup(entry)` by `vocab.fold`; the file is read once |
-| `llm.py` | The card prompt lists each entry's numbered groups; the model returns the group number and the code copies its IPA. The detail prompt is given Wiktionary's senses. Revise keeps the pronunciation unless asked |
-| `pdf.py` | CC BY-SA credit on the title page |
-| Tests | 20 new: the builder's rules, group choice, reply matching, the pronunciation gate |
+| `llm.py` | The detail prompt is back to its pre-Wiktionary wording. The card prompt gives a single IPA directly; only entries with several pronunciations list their senses, explicitly only for choosing the IPA. `fits` checks the group only where several are listed |
+| `build_dictionary.py` | `needed()` keeps an entry only if it has a British IPA, and senses only when there are several pronunciations. `dictionary.json` went from about 1.5 MB to 207 KB; still 2,384 entries, 91 with several pronunciations |
+| `pdf.py` | The credit names pronunciations only |
+| Tests | 133 (from 127): single-IPA entries, the group ignored where only one is listed, `needed()`, the detail prompt carrying no senses, and quotes not stored as written examples (D6) |
 
-Coverage: 4,426 of 5,000 entries are in Wiktionary (3,496 of 3,500 words, 932
-of 1,500 phrases); 2,384 have a British IPA (2,144 words, 242 phrases).
+### Measurements
 
-## Design decisions and the evidence for them
+**Meanings**, 30 fresh entries, all three versions run on gpt-4o-mini:
 
-| Decision | Why |
+| Version | Against the pre-Wiktionary meanings |
 |---|---|
-| Only IPA tagged Received-Pronunciation, UK or British | Untagged IPA in Wiktionary is often American |
-| Group senses by IPA, and let the model pick a group number | Homographs ("buffet", "adept", "abject") have a different pronunciation per sense. The model never retypes IPA, so it cannot corrupt it |
-| Follow a variant to every single-target main spelling, with an equal share of senses | "gibe" went only to "gybe" (sailing) and lost the taunting sense. Every multi-target link in the data was a wiktextract comma split ("close but no cigar" -> "close"), so those are not followed. A similarity check was tried first; "but no cigar" passed it, so it was dropped |
-| Normalise notation (`ɹ` to `r`, no syllable dots or tie bars) | Matches the IPA style the app already used: `/əˈbɹɪd͡ʒ.aɪ̯/` becomes `/əˈbrɪdʒaɪ/` |
+| Grounded in senses (`b1c8b70`) | 5 worse, 0 better: "caliber" (bore of a gun), "diaspora" (Jews only), "quash", "purport", "ashen" (muddled senses) |
+| Now | About the same on 28; 2 debatable ("amplify" narrowed to sound, "bereft" oddly worded) |
 
-## Defects found and fixed
+Both Wiktionary versions used American spellings twice ("specialized", "gray");
+the pre-Wiktionary run did not. The prompts ask for British spelling in all
+three, so this looks like sampling variation, but it is noted.
 
-| # | Severity | Finding | Root cause | Fix |
+**Card prompt size** (median of 40 batches of 5, prompt text only): 261 tokens
+before Wiktionary, 734 with senses, **428 now**.
+
+**A normal day** (5 cards, 5 entries opened, 3 edits) is 14 calls and 13,232
+tokens on gpt-4o-mini. Groq's per-minute limiter counted each request at 1,600
+to 2,800 tokens (from its refusal messages), so opening a new entry costs 4,000
+to 5,000 of its 8,000 a minute: two first opens within a minute usually send the
+second to OpenAI. The daily 200,000 holds such a day several times over.
+
+### End-to-end testing
+
+The same script as the fifth round, with one check added (below), against a
+fresh copy of the data, Groq first.
+
+| Result | Detail |
+|---|---|
+| **41 of 41** | Daily pick, typed entries, 5 More, refusals, detail (concurrent opens pay once), revisions (quotes and pronunciation kept unless asked), accept and delete with PDF checks, PDF locked, accept racing an edit, past days |
+| Wiktionary IPA | Used on 9 of the 9 cards that had one; "buffet" got the meal pronunciation, "adept" one of its two |
+| Fallbacks | 12, all Groq's per-minute limit (5 detail, 5 quote choice, 2 revision). Every card batch was answered by Groq, and none was rejected |
+| Errors | 0 tracebacks, 0 5xx |
+
+A first attempt stopped at check 4 because the copy still had today's page from
+a measurement script; the copy was refreshed from `data/` and rerun. The
+project's `data/` and `output/` were not changed.
+
+### Defect found and fixed
+
+| # | Severity | Finding | Evidence | Fix |
 |---|---|---|---|---|
-| D1 | High | **Edit rewrote the pronunciation on unrelated feedback**, replacing Wiktionary's IPA with the model's | The revision returned a pronunciation and the code always used it; models rewrite it freely | `feedback_asks_to_change_pronunciation`, decided first, gates it, as for quote removal. Regression test fails without the gate; live check passed |
-| D2 | High | gpt-4o-mini returned one card per Wiktionary group instead of one per entry (6 cards for 5 entries, in 8 of 8 runs), so meanings landed on the wrong entries | Cards were matched to entries by position, and the listing invited a card per group | Each card echoes its `entry`; `llm.fits` rejects a batch whose entries differ (by `letters`: fold, then alphanumerics) or that names a missing group, so the call retries or falls back. 12 of 12 batches then correct; 40 entries with no rejection |
-| D3 | Medium | Groq misspelt a long field name ("wikictionary_group"), failing the reply | Model typo on an unusual key | Field renamed to `group` |
-| D4 | Medium | "gibe" lost its main sense | See variants above | Equal shares across main spellings |
-| D5 | Low | "close but no cigar" took the senses of "close" | wiktextract comma split | Multi-target links not followed |
+| D6 | Medium | **Edit could copy a Guardian quote into the written examples**, so it appeared twice, the copy labelled "Example sentence" | Seen on "cognate". Measured: 2 of 12 unrelated edits, both answered by gpt-4o-mini (2 of its 7; Groq 0 of 5). Root cause: the model returns the quote text in `written_examples`, and `llm.revise` stored them all | `llm.revise` drops written examples that match any of the entry's quotes, kept or dropped, by `letters()`. Two regression tests failed before the fix. Live retest on gpt-4o-mini: the model returned a copy in 1 of 12 revisions; 0 of 12 stored one |
 
-Two fixes were tried and reverted because measurement showed no gain: a hint to
-prefer the commonest sense over the first listed ("terra firma" still led with
-the legal sense).
+### Remaining (not code defects)
 
-## End-to-end testing
+- 52% of entries have no British IPA in Wiktionary (phrases especially: 242 of
+  1,500) and get the model's.
+- Respellings are written by the model; Groq formats about 1 in 9 wrongly
+  ("BUH-fay" for /ˈbʊfeɪ/).
+- Wiktionary's notation shows through in places: `/(ˌ)ʌnˈfæðəməbl̩/`.
+- Examples usually show one or two meanings: the three quote places are chosen
+  for the principal meaning only.
 
-A script of 40 checks ran against a running server on a copy of the code and
-data. It covers the whole lifecycle: local-only middleware, the daily pick
-(made once), typed entries with and without accents, 5 More, refusals (blank,
-duplicate, already accepted, past day), detail generation (concurrent opens pay
-once, quotes first, at most 5 examples), revisions (quotes kept unless asked,
-pronunciation kept, exact quote removal), accept and delete with PDF checks,
-the PDF locked by a viewer, an accept racing an edit, and the Wiktionary
-behaviour below.
+## Fifth round: Wiktionary added (summary)
 
-| Run | Setup | Result |
+Commit `b1c8b70`. British IPA and senses from Wiktionary via kaikki.org, grouped
+by pronunciation so homographs keep each IPA with its senses; variants follow
+their main spellings ("gibe" -> jibe, gybe); comma-split links are not followed.
+The model picks a group number and the code copies its IPA. E2E: 40 of 40 with
+Groq first and again with Groq unreachable.
+
+Defects found and fixed then, all still in force:
+
+| # | Finding | Fix |
 |---|---|---|
-| 1 | Groq first | 38 of 40. Failures: D1, and a bug in the test script itself (it typed an entry still on today's page); both fixed |
-| 2 | Groq first | **40 of 40.** 13 fallbacks, all Groq rate limits; no tracebacks or 5xx. Wiktionary IPA used on 12 of the 12 cards that had one |
-| 3 | Groq unreachable (all OpenAI) | **40 of 40.** 22 fallbacks; Wiktionary IPA used on 10 of 10 |
-| - | `GROQ_API_KEY=bad` | Reported as a rejected key in 0.48 s, no fallback |
-| - | Browser (Playwright) | IPA and grounded senses shown; 0 console errors |
+| D1 | Edit rewrote the pronunciation on unrelated feedback | `feedback_asks_to_change_pronunciation` gates it |
+| D2 | gpt-4o-mini returned one card per group, misplacing meanings (8 of 8 runs) | Cards echo `entry`; `llm.fits` rejects mismatches |
+| D3 | Groq misspelt a long field name | Field renamed to `group` |
+| D4 | "gibe" lost its taunting sense | Equal shares across main spellings |
+| D5 | "close but no cigar" took the senses of "close" | Multi-target links not followed |
 
-Wiktionary checks that passed: "raison d'etat" typed without the accent gets
-`/reɪˌzɒ̃ deɪˈtɑː/`; "unfathomable" has the stress on "fath" (Groq had put it on
-"thom"); "buffet" as a meal gets `/ˈbʊfeɪ/`; "adept" gets one of its two IPAs;
-"gibe" includes the taunting sense; "photobomb" (not in the list) gets the
-model's IPA; the PDF contains the IPA and the credit.
-
-## Measurements
-
-| Measure | Before | After |
-|---|---|---|
-| Card batch prompt (median tokens) | 349 | 748 |
-| Malformed respellings, Groq (of 40) | 2 | 4-5 |
-| Malformed respellings, gpt-4o-mini (of 40) | - | 0-1 |
-| Card meanings, 30 compared side by side | - | 26 as good, 1 better, 3 worse or debatable |
-
-## Remaining (not code defects)
-
-- **52% of entries have no British IPA in Wiktionary**, phrases especially
-  (242 of 1,500). They get the model's IPA.
-- **Respellings are still written by the model;** Groq's were no better for
-  having the IPA ("uh-DEP-t" in run 2). Deriving them from the IPA in code would
-  fix this.
-- **Wiktionary's own notation shows through** in places: optional stress
-  `(ˌ)` and syllabic marks (`/(ˌ)ʌnˈfæðəməbl̩/`). Correct, but less tidy.
-- **Meanings sometimes follow Wiktionary's first-listed sense** rather than the
-  commonest.
-- **Typed entries outside the master list** get no Wiktionary data.
-- **Wiktionary gaps:** some common words ("genesis") have no British IPA.
+Superseded by the sixth round: meanings and detail senses grounded in
+Wiktionary's senses.

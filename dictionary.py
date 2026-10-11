@@ -1,4 +1,4 @@
-"""Wiktionary's British pronunciations and senses for master-list entries, built by build_dictionary.py."""
+"""Wiktionary's British pronunciations for master-list entries, built by build_dictionary.py."""
 import json
 from functools import cache
 
@@ -14,8 +14,11 @@ def entries():
 
 
 def lookup(entry):
-    """Return the entry's sense groups, [{ipa, senses}], each with its British IPA or "" if none.
+    """Return the entry's pronunciation groups, [{ipa, senses}].
 
-    Empty when Wiktionary does not have the entry, or it is not in the master list.
+    One group: its ipa is the entry's pronunciation, and senses is empty. Several: each group has
+    its senses, so the meaning on the card can pick its pronunciation; ipa is "" for senses with no
+    British pronunciation. Empty when Wiktionary has no British pronunciation, or the entry is not
+    in the master list.
     """
     return entries().get(vocab.fold(entry), [])

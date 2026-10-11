@@ -62,3 +62,11 @@ def test_a_link_split_at_a_comma_is_not_followed():
 
 def test_an_entry_with_senses_of_its_own_is_not_a_variant():
     assert build.main_spellings([alternative("x", "y"), record("x", "verb")]) == []
+
+
+def test_only_pronunciations_are_kept_and_senses_only_to_choose_between_several():
+    one = [{"ipa": "/əˈbeɪt/", "senses": ["(verb) To lessen."]}]
+    several = [{"ipa": "/ˈbʊfeɪ/", "senses": ["(noun) A sideboard."]}, {"ipa": "", "senses": ["(verb) To strike."]}]
+    assert build.needed(one) == [{"ipa": "/əˈbeɪt/", "senses": []}]
+    assert build.needed(several) == several
+    assert build.needed([{"ipa": "", "senses": ["(noun) Origin."]}]) == []

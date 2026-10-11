@@ -1,4 +1,8 @@
-"""Build dictionary.json: British pronunciations and senses from Wiktionary for the master list.
+"""Build dictionary.json: British pronunciations from Wiktionary for the master list.
+
+Senses are kept only for entries with several pronunciations, so the card can pick the one that
+goes with its meaning. Meanings themselves are left to the model: Wiktionary lists senses roughly
+in historical order, and models given them led with rare senses ("terra firma", "cognate").
 
 The source is kaikki.org's extract of English Wiktionary (CC BY-SA). It is downloaded to
 downloads/ on first use (about 520 MB); each pass over it takes about a minute.
@@ -128,17 +132,28 @@ def lookup_entry(records, targets):
     return [{"ipa": ipa, "senses": senses} for ipa, senses in combined.items()] or groups(records)
 
 
+def needed(entry_groups):
+    """Return what the app uses: nothing without a British pronunciation, and senses only when
+    there are several groups to choose between."""
+    if not any(g["ipa"] for g in entry_groups):
+        return []
+    if len(entry_groups) == 1:
+        return [{"ipa": entry_groups[0]["ipa"], "senses": []}]
+    return entry_groups
+
+
 def build():
-    """Write dictionary.json for every master-list entry Wiktionary knows."""
+    """Write dictionary.json for every master-list entry with a British pronunciation in Wiktionary."""
     download()
     entries = {vocab.fold(e): e for e in vocab.master_list() if e}
     found = {key: matching(entries[key], records) for key, records in records_for(entries.keys()).items()}
     variants = {vocab.fold(v) for records in found.values() for v in main_spellings(records)}
     targets = records_for(variants)
-    result = {key: g for key in entries if (g := lookup_entry(found.get(key, []), targets))}
+    result = {key: g for key in entries if (g := needed(lookup_entry(found.get(key, []), targets)))}
     dictionary.PATH.write_text(json.dumps(result, ensure_ascii=False, indent=0) + "\n", encoding="utf-8")
-    with_ipa = sum(any(g["ipa"] for g in v) for v in result.values())
-    print(f"{len(result)} of {len(entries)} entries; {with_ipa} with a British pronunciation")
+    several = sum(len(g) > 1 for g in result.values())
+    print(f"{len(result)} of {len(entries)} entries have a British pronunciation; "
+          f"{several} have several, listed with their senses")
 
 
 if __name__ == "__main__":

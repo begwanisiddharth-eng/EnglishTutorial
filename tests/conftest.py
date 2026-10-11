@@ -39,7 +39,7 @@ def fake_answer(prompt, schema):
     """Return a valid reply for each prompt type, without calling an LLM."""
     if schema is llm.CardBatch:
         blocks = re.findall(r"^\d+\. (.*)\n((?:   .*\n?)*)", prompt.split("Entries:")[1], re.MULTILINE)
-        return {"cards": [{"entry": e, "meaning": f"meaning of {e}", "group": int("Wiktionary group 1" in listed),
+        return {"cards": [{"entry": e, "meaning": f"meaning of {e}", "group": int("pronunciation 1:" in listed),
                            "pronunciation": "/x/", "respelling": "X"} for e, listed in blocks]}
     if schema is llm.Detail:
         return {"senses": [{"part_of_speech": "verb", "definition": "d"}],
