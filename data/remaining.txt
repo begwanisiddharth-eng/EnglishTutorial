@@ -740,7 +740,6 @@ contemn
 contentious
 contiguous
 continence
-contingent
 contrapuntal
 contravene
 contrite
@@ -1686,7 +1685,6 @@ humdrum
 humility
 hummock
 hurly-burly
-husbandry
 hustings
 hybrid
 hyperbole
@@ -2525,7 +2523,6 @@ pettish
 petulant
 phalanx
 phantasmagoria
-philanderer
 philanthropist
 philippic
 philistine
@@ -3030,7 +3027,6 @@ sibilant
 sidereal
 simian
 simile
-simper
 simulacrum
 sinecure
 sinewy
@@ -3219,7 +3215,6 @@ tentative
 tenuous
 tenure
 tepid
-tergiversate
 termagant
 terse
 tessellate
@@ -3251,7 +3246,6 @@ toothsome
 topography
 torpid
 torrid
-tortuous
 touchstone
 tousled
 tractable
@@ -3281,7 +3275,6 @@ troglodyte
 truckle
 truculent
 truism
-trumpery
 truncate
 tryst
 tumescent
@@ -3845,14 +3838,12 @@ bring home the bacon
 bring to heel
 Brobdingnagian
 Brutus' betrayal
-Buridan's ass
 burn one's bridges
 burn the candle at both ends
 burn the midnight oil
 bury one's head in the sand
 bury the hatchet
 butter wouldn't melt in one's mouth
-by and large
 by hook or by crook
 by the book
 by the same token
@@ -4337,7 +4328,6 @@ meet one's match
 meet one's Waterloo
 melt into thin air
 memento mori
-ménage à trois
 mene, mene, tekel, upharsin
 mens rea
 mens sana in corpore sano
@@ -4509,7 +4499,6 @@ practice what one preaches
 précis
 prêt-à-porter
 pride goes before a fall
-prima donna
 prima facie
 primus inter pares
 pro bono

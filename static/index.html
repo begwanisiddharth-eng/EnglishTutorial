@@ -74,19 +74,17 @@
 
 <div class="drawer-overlay" id="overlay" onclick="closeDrawer()"></div>
 <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-word" inert>
-  <div class="drawer-header">
-    <div>
-      <div class="drawer-word" id="d-word"></div>
-      <div class="pronunciation" id="d-pron"></div>
-      <div class="drawer-ipa" id="d-ipa"></div>
-      <div class="drawer-def" id="d-def"></div>
-    </div>
+  <header class="drawer-header">
     <button class="btn-close" onclick="closeDrawer()" aria-label="Close">&times;</button>
-  </div>
+    <h2 class="drawer-word" id="d-word"></h2>
+    <div class="drawer-pron" id="d-pron"></div>
+    <p class="drawer-def" id="d-def"></p>
+  </header>
   <div class="drawer-body" id="d-body"></div>
-  <div class="drawer-footer">
+  <div class="drawer-footer" id="d-footer">
+    <label class="feedback-label" for="d-feedback">Suggest a change</label>
     <textarea id="d-feedback" rows="2"
-              placeholder="What should change? e.g. drop the second quote, add the chemistry sense"></textarea>
+              placeholder="e.g. drop the second quote, add the chemistry sense"></textarea>
     <div class="footer-buttons">
       <button class="btn btn-secondary" id="d-edit" onclick="reviseActive()">
         <span class="spinner dark"></span><span class="btn-label">Edit</span>

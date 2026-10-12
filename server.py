@@ -1,4 +1,5 @@
 """Local web server for the vocabulary app. Run with: uv run server.py"""
+import ctypes
 import sys
 import threading
 import urllib.error
@@ -21,6 +22,9 @@ STATIC = Path(__file__).parent / "static"
 PORT = 8000
 URL = f"http://127.0.0.1:{PORT}"
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+CLOSE_GRACE = 5  # seconds to wait after the last page closes, so a reload does not stop the app
+OPEN_PAGES = set()
+SERVER = None  # the uvicorn server when run as a program; tests leave it None
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -103,6 +107,27 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.post("/api/pages/{page_id}/open")
+def page_opened(page_id: str):
+    """Record a page as open."""
+    OPEN_PAGES.add(page_id)
+
+
+@app.post("/api/pages/{page_id}/close")
+def page_closed(page_id: str):
+    """Record a page as closed; once none is open, stop the app after a short grace period."""
+    OPEN_PAGES.discard(page_id)
+    if not OPEN_PAGES:
+        threading.Timer(CLOSE_GRACE, stop_if_unused).start()
+
+
+def stop_if_unused():
+    """Stop the server if no page has opened since the last one closed."""
+    if SERVER and not OPEN_PAGES and not SERVER.should_exit:
+        SERVER.should_exit = True
+        print("The Word Bank page was closed, so the app has stopped.")
+
+
 @app.get("/api/today")
 def today():
     """Return today's date and entries."""
@@ -174,8 +199,21 @@ def delete(entry_id: int):
     return {"ok": True}
 
 
+def disable_quick_edit():
+    """Turn off QuickEdit for this console window. While text is selected in it, Windows blocks every
+    write to the console, and the app's logging with it, so a stray click froze the whole app."""
+    console = ctypes.windll.kernel32
+    handle = console.GetStdHandle(-10)  # standard input
+    mode = ctypes.c_ulong()
+    console.GetConsoleMode(handle, ctypes.byref(mode))
+    console.SetConsoleMode(handle, (mode.value & ~0x40) | 0x80)  # clear QuickEdit, keep the setting
+
+
 if __name__ == "__main__":
     if missing := config.missing_settings():
         sys.exit("Add these settings to the .env file, then start again: " + ", ".join(missing))
+    if sys.platform == "win32":
+        disable_quick_edit()
     threading.Timer(1.5, webbrowser.open, [URL]).start()
-    uvicorn.run(app, host="127.0.0.1", port=PORT)
+    SERVER = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT))
+    SERVER.run()

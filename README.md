@@ -45,8 +45,10 @@ everything you have accepted.
    - **Windows:** double-click `start.bat`.
    - **Mac or Linux:** run `./start.sh`.
    - **Any system:** run `uv run server.py` in this folder.
-4. Your browser opens at <http://127.0.0.1:8000>. To stop the app, close the
-   terminal window.
+4. Your browser opens at <http://127.0.0.1:8000>. To stop the app, close its
+   browser tab or window: the app stops about 5 seconds later, and the terminal
+   window closes with it. Reloading the page does not stop it. If the app cannot
+   start, the window stays open to show why.
 
 If a key is missing or blank, the app does not start. It names what to add
 instead, for example `Add these settings to the .env file, then start again:
@@ -89,7 +91,9 @@ LLM_MODEL=groq/openai/gpt-oss-120b
 2. Click a card. The side panel loads its meanings, examples and synonyms. The
    first opening takes a few seconds while the content is fetched and written;
    after that it is instant.
-3. Read it, and press the speaker button to hear it.
+3. Read it, and press **Listen** to hear it. The button pulses while it speaks;
+   the voice can take up to a second to start, or about 2 seconds if the
+   browser's online voice fails and an installed one is used instead.
 4. If something is off, type it in the box at the bottom and press **Edit**. For
    example: "drop the second quote", "the stress is on the last syllable", or
    "add the chemistry sense".
@@ -100,7 +104,7 @@ LLM_MODEL=groq/openai/gpt-oss-120b
 
 | Screen | What it shows | What you can do |
 |---|---|---|
-| **Today** | Today's cards. Phrases of more than two words show no respelling | **5 More Words** adds up to five entries and tells you when the list has run out. **Add** looks up any word or phrase you type |
+| **Today** | Today's cards. Phrases of more than two words show no respelling | **5 More Words** adds up to five entries and tells you when the list has run out. **Add** looks up any word or phrase you type. The bin icon on a card deletes it, after asking |
 | **Side panel** | Meanings, up to 5 examples (Guardian quotes first, then written examples labelled "Example sentence"), synonyms and antonyms | **Edit**, **Accept** and **Delete**. While one of them runs, the others wait. Guardian quotes are never reworded, and are removed only when you ask |
 | **Browse** | A calendar. Highlighted days have accepted entries | Click a day to see what you accepted then. Past days are read-only and show only accepted entries |
 | **All Words** | Every accepted entry, alphabetically, with its meaning and date | Search (ignoring accents), open, or **Delete** |
@@ -211,6 +215,8 @@ Messages appear at the bottom of the page.
 | *That entry no longer exists. Reload the page.* | It was deleted, for example in another tab | Reload the page |
 | *"…" is already accepted.* | It was accepted, for example in another tab, while an Edit was running. The edit was not saved | Nothing; the accepted version is the one in the PDF |
 | *No accepted entries yet, so there is no PDF.* | Nothing has been accepted yet | Accept an entry first |
+| *The browser's speech engine did not start (N voices).* | The speaker button asked the browser to speak, and nothing started within 5 seconds. The app has no sound of its own: pronunciations are spoken by the browser | No voice worked, not even one installed on the computer. Restart the browser and try again. If it persists, note the number of voices and try another browser, such as Edge |
+| *Could not play the pronunciation (reason).* | The browser's speech engine reported an error, named in brackets | As above |
 
 **A panel takes 30 seconds or more:** Groq accepted the request but did not
 answer, so the app waited out its 30-second limit before asking OpenAI. The
@@ -219,7 +225,22 @@ terminal shows a line ending in `Timeout`.
 **The page did not load:** the "Try again" button reloads Today without
 restarting the app.
 
+**The app froze while the terminal window showed selected text:** Windows pauses
+a program whose window has a selection, until the selection ends. The app now
+turns this off for its own window, so clicking in it is harmless. If an older
+copy freezes, press Esc in the terminal window.
+
 ## Limitations: what, why, and possible solutions
+
+### Spoken pronunciation
+
+**The spoken voice can be American.**
+- *Why:* the browser does the speaking, with the voices it has. Chrome's British
+  voices are Google's online ones; when they fail, the app falls back to a voice
+  installed in Windows, which by default are American (David, Mark, Zira).
+- *Solutions:* install a British voice in Windows (Settings, Time & Language,
+  Speech, Add voices, English (United Kingdom)) and restart the browser. The app
+  then uses it first.
 
 ### The language model
 
@@ -375,11 +396,16 @@ and Guardian services.
 | A blank key in `.env` let the app start | It is named at startup, like a missing key |
 | Keyboard users could Tab into the hidden side panel; Enter twice looked a word up twice | The panel behaves as a proper dialog; Enter is ignored while a lookup runs |
 | Search missed accented entries; long words on accepted cards broke mid-word | Search ignores accents; the badge sits above the word |
+| Closing the browser left the app, and its terminal window, running | The app stops about 5 seconds after its last page closes |
+| The speaker button gave no sign of working until the voice started, up to a second later | The button pulses from the click until the speech ends |
+| When the browser's speech engine failed, the speaker button silently did nothing | The failure is shown as a message, with its reason |
+| **No pronunciation was ever heard in Chrome.** The only British voices Chrome had were Google's online voices, and on this PC every one of them hung: Chrome reported speaking but made no sound and gave no error (seen in the user's own Chrome, UK and US voices alike). The Microsoft voices installed on the PC worked | A British voice installed on the computer is used first. An online voice that has not started after 2 seconds is replaced by an installed English voice |
+| A click in the terminal window froze the whole app until Esc was pressed (Windows QuickEdit pauses output while text is selected) | The app turns QuickEdit off for its own window |
 
 ## For developers
 
 ```
-uv run pytest                      # 133 tests; no API calls, real data untouched
+uv run pytest                      # 135 tests; no API calls, real data untouched
 uv run build_vocab.py              # check the vocabulary part files
 uv run build_vocab.py --write      # rebuild VOCABBASE.TXT from parts/
 uv run build_dictionary.py         # rebuild dictionary.json from Wiktionary

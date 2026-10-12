@@ -14,6 +14,11 @@ let calYear = 0, calMonth = 0, selectedDate = null;
 const SPEAKER_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
   <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/>
 </svg>`;
+const TRASH_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+  <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2zM6 9h12l-1 12H7L6 9zm4 2v8h1.5v-8H10zm2.5 0v8H14v-8h-1.5z"/>
+</svg>`;
+const SPEECH_TIMEOUT_MS = 5000;
+const NETWORK_VOICE_WAIT_MS = 2000;
 
 /* ============================================================
    Helpers
@@ -73,21 +78,61 @@ function remember(entries) {
 /* ============================================================
    Audio
    ============================================================ */
-/** Speak text aloud, preferring a British English voice. */
-function speak(text) {
+/** Return the voice to try first: a British voice on this computer, else a British network voice. */
+function britishVoice() {
+  const british = speechSynthesis.getVoices().filter((v) => v.lang === "en-GB");
+  return british.find((v) => v.localService) ?? british[0] ?? null;
+}
+
+/** Return an English voice installed on this computer. */
+function localVoice() {
+  return speechSynthesis.getVoices().find((v) => v.localService && v.lang.startsWith("en")) ?? null;
+}
+
+/** Speak text aloud, preferring a British voice; the button shows when speech is playing.
+ *  A network voice (Chrome's Google voices) can hang without starting or reporting an error, so if it
+ *  has not started after NETWORK_VOICE_WAIT_MS the text is spoken again with an installed voice.
+ *  A speech error, or speech that has not started after SPEECH_TIMEOUT_MS, is reported as a toast. */
+function speak(text, button, voice = britishVoice()) {
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-GB";
-  utterance.voice = speechSynthesis.getVoices().find((v) => v.lang === "en-GB") ?? null;
+  utterance.lang = voice?.lang ?? "en-GB";
+  utterance.voice = voice;
+  const fallback = voice && !voice.localService ? localVoice() : null;
+  const finish = () => {
+    clearTimeout(silence);
+    button.classList.remove("playing");
+  };
+  const silence = setTimeout(() => {
+    finish();
+    if (fallback) {
+      utterance.onend = utterance.onerror = null;
+      speak(text, button, fallback);
+    } else {
+      toast(`The browser's speech engine did not start (${speechSynthesis.getVoices().length} voices).`, true);
+    }
+  }, fallback ? NETWORK_VOICE_WAIT_MS : SPEECH_TIMEOUT_MS);
+  utterance.onstart = () => clearTimeout(silence);
+  utterance.onend = finish;
+  utterance.onerror = (event) => {
+    finish();
+    if (!["interrupted", "canceled"].includes(event.error)) toast(`Could not play the pronunciation (${event.error}).`, true);
+  };
   speechSynthesis.cancel();
   speechSynthesis.speak(utterance);
+  button.classList.add("playing");
+}
+
+/** Return HTML for an audio button; with a label it is the side panel's larger Listen button. */
+function speakButton(entry, label = "") {
+  return `<button class="${label ? "listen" : "speak"}" type="button" title="Listen"
+            aria-label="Listen to ${esc(entry.entry)}" data-speak="${esc(entry.entry)}">${SPEAKER_ICON}${
+            label ? `<span>${label}</span>` : ""}</button>`;
 }
 
 /** Return HTML for the respelling (if any) followed by an audio button. */
 function pronunciationHTML(entry) {
   const respelling = entry.respelling ? `<span>${esc(entry.respelling)}</span>` : "";
-  return `${respelling}
-    <button class="speak" type="button" title="Listen" aria-label="Listen to ${esc(entry.entry)}"
-            data-speak="${esc(entry.entry)}">${SPEAKER_ICON}</button>`;
+  return `${respelling}${speakButton(entry)}`;
 }
 
 // Capture phase, so the click plays audio without also opening the card underneath.
@@ -95,7 +140,7 @@ document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-speak]");
   if (!button) return;
   event.stopPropagation();
-  speak(button.dataset.speak);
+  speak(button.dataset.speak, button);
 }, true);
 
 /* ============================================================
@@ -130,14 +175,20 @@ function skeletons(count) {
   return Array(count).fill('<div class="card-skeleton"></div>').join("");
 }
 
+/** Return HTML for a card; today's cards also get a delete button (past days are read-only). */
 function cardHTML(entry, context) {
   const badge = entry.accepted ? '<span class="card-badge">accepted</span>' : "";
+  const remove = context === "today"
+    ? `<button class="card-delete" type="button" title="Delete" aria-label="Delete ${esc(entry.entry)}"
+         onclick="deleteEntry(${entry.id}, 'today')">${TRASH_ICON}</button>`
+    : "";
   return `
-    <div class="card" id="card-${entry.id}">
+    <div class="card${remove ? " deletable" : ""}" id="card-${entry.id}">
       ${badge}
       <button class="card-word card-open" type="button" onclick="openDrawer(${entry.id}, '${context}')">${esc(entry.entry)}</button>
       <div class="pronunciation">${pronunciationHTML(entry)}</div>
       <div class="card-def">${esc(entry.meaning)}</div>
+      ${remove}
     </div>`;
 }
 
@@ -273,9 +324,16 @@ function renderList() {
    ============================================================ */
 function renderHeader(entry) {
   document.getElementById("d-word").textContent = entry.entry;
-  document.getElementById("d-pron").innerHTML = pronunciationHTML(entry);
-  document.getElementById("d-ipa").textContent = entry.pronunciation ? `IPA: ${entry.pronunciation}` : "";
+  const respelling = entry.respelling ? `<span class="pron-chip" title="Respelling">${esc(entry.respelling)}</span>` : "";
+  const ipa = entry.pronunciation ? `<span class="pron-chip ipa" title="IPA">${esc(entry.pronunciation)}</span>` : "";
+  document.getElementById("d-pron").innerHTML = `${respelling}${ipa}${speakButton(entry, "Listen")}`;
   document.getElementById("d-def").textContent = entry.meaning;
+}
+
+/** Return HTML for a titled section of the side panel, with an optional count. */
+function sectionHTML(title, body, count = null) {
+  const badge = count === null ? "" : `<span class="count">${count}</span>`;
+  return `<section class="d-section"><h3 class="section-label">${title}${badge}</h3>${body}</section>`;
 }
 
 function tagsHTML(words, kind) {
@@ -285,27 +343,39 @@ function tagsHTML(words, kind) {
 /** Return HTML for one example with its source: a linked Guardian article or a written example. */
 function exampleHTML(example) {
   const source = example.source
-    ? `<a href="${esc(example.url)}" target="_blank" rel="noopener">${esc(example.source)}, ${fmtDate(example.date)}</a>`
-    : "Example sentence";
+    ? `<a href="${esc(example.url)}" target="_blank" rel="noopener">${esc(example.source)} &middot; ${fmtDate(example.date)}
+       <span aria-hidden="true">&#8599;</span></a>`
+    : "<span>Example sentence</span>";
   const kind = example.source ? "quote" : "written";
-  return `<div class="example-item ${kind}"><div>${esc(example.text)}</div>
-    <div class="example-source">&mdash; ${source}</div></div>`;
+  return `<figure class="example-item ${kind}"><blockquote>${esc(example.text)}</blockquote>
+    <figcaption class="example-source">${source}</figcaption></figure>`;
 }
 
 function renderDetail(detail) {
   const senses = detail.senses.map((s) =>
     `<li><span class="pos">${esc(s.part_of_speech)}</span>${esc(s.definition)}</li>`).join("");
-  const examples = detail.examples.map(exampleHTML).join("");
-  let html = `<div class="section-label">Meanings</div><ol class="senses">${senses}</ol>
-    <div class="section-label">Examples</div>${examples}`;
-  if (detail.synonyms.length) html += `<div class="section-label">Synonyms</div>${tagsHTML(detail.synonyms, "synonym")}`;
-  if (detail.antonyms.length) html += `<div class="section-label">Antonyms</div>${tagsHTML(detail.antonyms, "antonym")}`;
-  document.getElementById("d-body").innerHTML = html;
+  const related = [["Synonyms", detail.synonyms, "synonym"], ["Antonyms", detail.antonyms, "antonym"]]
+    .filter(([, words]) => words.length)
+    .map(([title, words, kind]) => `<div>${sectionHTML(title, tagsHTML(words, kind))}</div>`).join("");
+  document.getElementById("d-body").innerHTML =
+    sectionHTML("Meanings", `<ol class="senses">${senses}</ol>`, detail.senses.length) +
+    sectionHTML("Examples", detail.examples.map(exampleHTML).join(""), detail.examples.length) +
+    (related ? `<div class="related">${related}</div>` : "");
 }
 
-/** Enable feedback, Edit and Accept only for today's loaded, unaccepted entries, and nothing while busy. */
+/** Show the side panel's loading state while an entry's content is fetched or written. */
+function renderLoading() {
+  document.getElementById("d-body").innerHTML = `<div class="d-loading">
+    <p>Finding Guardian examples and preparing meanings...</p>
+    <div class="line"></div><div class="line short"></div><div class="block"></div><div class="block"></div></div>`;
+}
+
+/** Enable feedback, Edit and Accept only for today's loaded, unaccepted entries, and nothing while busy.
+ *  Entries that can never be edited (accepted, or from a past day) hide the controls altogether. */
 function setFooter(entry, context) {
-  const editable = !drawerBusy && context !== "browse" && entry.day === todayStr && !entry.accepted && entry.detail;
+  const changeable = context !== "browse" && entry.day === todayStr && !entry.accepted;
+  const editable = !drawerBusy && changeable && entry.detail;
+  document.getElementById("d-footer").classList.toggle("locked", !changeable);
   ["d-feedback", "d-edit", "d-accept"].forEach((id) => { document.getElementById(id).disabled = !editable; });
   document.getElementById("d-accepted").hidden = !entry.accepted;
   document.getElementById("d-delete").hidden = context === "browse";
@@ -345,8 +415,8 @@ async function openDrawer(entryId, context) {
   renderHeader(known.get(entryId));
   document.getElementById("d-feedback").value = "";
   setFooter(known.get(entryId), context);
-  document.getElementById("d-body").innerHTML =
-    '<div class="empty">Finding Guardian examples and preparing meanings...</div>';
+  renderLoading();
+  document.getElementById("d-body").scrollTop = 0;
   document.getElementById("overlay").classList.add("open");
   document.getElementById("drawer").classList.add("open");
   setModal(true);
@@ -449,3 +519,8 @@ async function openPdf() {
    Init
    ============================================================ */
 loadToday();
+
+// Tell the server which pages are open, so it can stop when the last one closes.
+const PAGE_ID = crypto.randomUUID();
+addEventListener("pageshow", () => navigator.sendBeacon(`/api/pages/${PAGE_ID}/open`));
+addEventListener("pagehide", () => navigator.sendBeacon(`/api/pages/${PAGE_ID}/close`));

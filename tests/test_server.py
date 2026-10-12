@@ -1,6 +1,8 @@
-"""HTTP behaviour: error messages, local-only access and the PDF route."""
+"""HTTP behaviour: error messages, local-only access, the PDF route and stopping when pages close."""
 import io
+import time
 import urllib.error
+from types import SimpleNamespace
 
 import litellm
 import pytest
@@ -108,3 +110,35 @@ def test_missing_provider_key_is_named(monkeypatch):
     use_groq_with_openai_fallback(monkeypatch)
     monkeypatch.delenv("GROQ_API_KEY")
     assert config.missing_settings() == ["GROQ_API_KEY"]
+
+
+@pytest.fixture
+def running(monkeypatch):
+    """A stand-in for the uvicorn server, with no grace period."""
+    monkeypatch.setattr(server, "CLOSE_GRACE", 0)
+    monkeypatch.setattr(server, "OPEN_PAGES", set())
+    monkeypatch.setattr(server, "SERVER", SimpleNamespace(should_exit=False))
+    return server.SERVER
+
+
+def closed_and_waited(client, page_id):
+    client.post(f"/api/pages/{page_id}/close")
+    time.sleep(0.2)
+
+
+def test_app_stops_when_the_last_page_closes(client, running):
+    client.post("/api/pages/a/open")
+    client.post("/api/pages/b/open")
+    closed_and_waited(client, "a")
+    assert not running.should_exit
+    closed_and_waited(client, "b")
+    assert running.should_exit
+
+
+def test_page_reopened_within_the_grace_period_keeps_the_app_running(client, running, monkeypatch):
+    monkeypatch.setattr(server, "CLOSE_GRACE", 0.3)
+    client.post("/api/pages/a/open")
+    client.post("/api/pages/a/close")
+    client.post("/api/pages/b/open")
+    time.sleep(0.5)
+    assert not running.should_exit
